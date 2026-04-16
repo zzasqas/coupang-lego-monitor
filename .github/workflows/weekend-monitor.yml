@@ -2,8 +2,8 @@ name: LEGO Weekend Monitor
 
 on:
   schedule:
-    - cron: '0 1 * * 0,6'   # 每週六、週日 台灣時間 09:00（UTC 01:00）
-  workflow_dispatch:          # 允許手動從 GitHub 網頁觸發
+    - cron: '30 2 * * 0,6'
+  workflow_dispatch:
 
 jobs:
   monitor:
@@ -11,21 +11,15 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-
       - name: Install dependencies
         run: npm ci
-
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
-
       - name: Run LEGO price monitor
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
