@@ -1,0 +1,24 @@
+# 機密
+.env
+
+# 資料庫（本機持久化，不上 GitHub）
+db/
+
+# Log
+logs/
+*.log
+
+# Node
+node_modules/
+
+# Playwright 快取
+.playwright/
+
+# 截圖 / 暫存
+screenshots/
+*.png
+
+# OS
+.DS_Store
+Thumbs.db
+.claude/

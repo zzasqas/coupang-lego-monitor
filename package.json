@@ -1,0 +1,20 @@
+{
+  "name": "coupang-lego-monitor",
+  "version": "1.0.0",
+  "description": "Coupang 樂高自動化監控系統",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "debug": "node src/index.js --debug",
+    "test:pchome": "node src/crawler/pchome.js",
+    "test:biggo": "node src/crawler/biggo.js",
+    "test:coupang": "node src/crawler/coupang.js",
+    "test:full": "node src/index.js --dry-run",
+    "test:notify": "node src/notify/telegram.js"
+  },
+  "dependencies": {
+    "sql.js": "^1.12.0",
+    "dotenv": "^16.4.5",
+    "playwright": "^1.44.0"
+  }
+}

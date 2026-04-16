@@ -1,0 +1,36 @@
+{
+  "thresholds": {
+    "normal_item":        0.64,
+    "eol_item":           0.69,
+    "pchome_sale_offset": 0.01,
+    "_comment": "Coupang：非絕版 6.4折／絕版 6.9折；PCHome 特價門檻各寬鬆 0.1折（6.5折／7.0折）"
+  },
+  "pchome_cache_days": {
+    "min": 40,
+    "max": 50,
+    "_comment": "PCHome 定價 & 絕版判斷的快取天數"
+  },
+  "pchome_sale_cache_days": {
+    "min": 2,
+    "max": 3,
+    "_comment": "PCHome 特價快取天數（較短，追蹤特賣變化）"
+  },
+  "coupang": {
+    "search_top_n": 30,
+    "search_keywords": ["樂高", "LEGO"],
+    "request_delay_ms": { "min": 1500, "max": 3500 },
+    "verify_product_page": false,
+    "_verify_comment": "true = BigGo 取 URL 後再進 Coupang 商品頁抓實際售價（會員價/券後價），較準確但速度較慢"
+  },
+  "brickeconomy": {
+    "usd_to_twd_rate": 33,
+    "_comment": "PCHome 找不到時，從 BrickEconomy 查 USD 零售價再換算 TWD（EOL 品項定價備援）"
+  },
+  "schedule": {
+    "times": ["08:00", "20:00"]
+  },
+  "weekly_report": {
+    "day_of_week": 2,
+    "_comment": "0=Sun, 1=Mon, 2=Tue, ..., 6=Sat"
+  }
+}
