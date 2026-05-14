@@ -21,6 +21,30 @@ const logger = require('../utils/logger');
 const BIGGO_SEARCH = 'https://biggo.com.tw/s/';
 const DEBUG_DIR = path.join(__dirname, '../../screenshots');
 
+/**
+ * 展示盒 / 周邊配件 關鍵字清單
+ * 搜尋結果若命中以下任一關鍵字，視為非 LEGO 本體商品，直接排除。
+ */
+const DISPLAY_BOX_KEYWORDS = [
+  // 中文
+  '展示盒', '展示架', '展示台', '展示座',
+  '壓克力', '壓克力盒', '壓克力架',
+  '收納盒', '收納架',
+  '保護盒', '保護殼',
+  '防塵盒', '防塵套', '防塵罩',
+  '透明盒', '積木架', '模型架',
+  '拼裝盒', '儲物盒',
+  // 英文 / 日文
+  'display box', 'display case', 'display stand',
+  'acrylic case', 'acrylic box',
+  'storage box', 'dust cover',
+];
+
+function isDisplayBoxProduct(name) {
+  const lower = name.toLowerCase();
+  return DISPLAY_BOX_KEYWORDS.some((kw) => lower.includes(kw.toLowerCase()));
+}
+
 function randomDelay(min = 1000, max = 2500) {
   return new Promise((r) => setTimeout(r, min + Math.random() * (max - min)));
 }
@@ -198,9 +222,24 @@ async function searchBySetNumber(page, setNumber) {
       return null;
     }
 
+    // 過濾展示盒 / 周邊配件（非 LEGO 本體）
+    const filtered = products.filter((p) => !isDisplayBoxProduct(p.name));
+    const excluded = products.length - filtered.length;
+    if (excluded > 0) {
+      logger.debug(
+        `[BigGo] ${setNumber} 過濾非 LEGO 本體（展示盒等）${excluded} 筆：` +
+        products.filter((p) => isDisplayBoxProduct(p.name)).map((p) => `「${p.name}」`).join(', ')
+      );
+    }
+
+    if (filtered.length === 0) {
+      logger.info(`[BigGo] ${setNumber} → Coupang 上找不到（全為展示盒）`);
+      return null;
+    }
+
     // 優先找名稱中含 set number 的，否則取最低價
-    const exact = products.find((p) => p.name.includes(setNumber));
-    const best  = exact || products.reduce((a, b) => a.price < b.price ? a : b);
+    const exact = filtered.find((p) => p.name.includes(setNumber));
+    const best  = exact || filtered.reduce((a, b) => a.price < b.price ? a : b);
 
     logger.info(
       `[BigGo] ${setNumber} → Coupang NT$${best.price}` +
