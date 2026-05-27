@@ -67,19 +67,18 @@ copy .env.example .env
 `.env` 內容：
 
 ```env
-NOTIFY_CHANNEL=telegram
-TELEGRAM_BOT_TOKEN=你的BotToken
-TELEGRAM_CHAT_ID=你的ChatID
+NOTIFY_CHANNEL=discord
+DISCORD_WEBHOOK_URL=你的Webhook URL
 HEADLESS=true
 DRY_RUN=false
 ```
 
-> Telegram Bot 申請方式見下方「[設定 Telegram 通知](#telegram-通知設定)」
+> Discord Webhook 申請方式見下方「[設定 Discord 通知](#discord-通知設定)」
 
 ### 3. 測試通知
 
 ```bash
-node src/notify/telegram.js
+node src/notify/discord.js
 ```
 
 ### 4. 試跑（不發通知）
@@ -222,8 +221,8 @@ node src/index.js --dry-run
 # 除錯模式（存截圖到 screenshots/）
 node src/index.js --debug
 
-# 測試 Telegram 通知
-node src/notify/telegram.js
+# 測試 Discord 通知
+node src/notify/discord.js
 
 # 測試 PCHome 爬蟲（指定套組號）
 node src/crawler/pchome.js 76452
@@ -234,21 +233,24 @@ node src/crawler/biggo.js 10350
 
 ---
 
-## Telegram 通知設定
+## Discord 通知設定
 
-1. Telegram 搜尋 **`@BotFather`** → `/newbot` → 取得 Bot Token
-2. 對 Bot 傳一則訊息（先加好友）
-3. 開啟瀏覽器取得 Chat ID：
-   ```
-   https://api.telegram.org/bot{你的TOKEN}/getUpdates
-   ```
-   找 `"chat":{"id":...}` 的數字
+> Webhook URL **本身就綁定一個頻道**，所以「限制單一頻道」是天然成立的。
+
+1. 在你的 Discord 伺服器，挑一個只用來收 LEGO 通知的頻道（或新建一個）
+2. 該頻道右上角齒輪 → **整合** → **Webhook** → **新增 Webhook**
+3. 命名（例：`LEGO 監控`）→ **複製 Webhook URL**
 4. 填入 `.env`：
    ```
-   TELEGRAM_BOT_TOKEN=...
-   TELEGRAM_CHAT_ID=...
+   NOTIFY_CHANNEL=discord
+   DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
    ```
-5. 測試：`node src/notify/telegram.js`
+5. 測試：`node src/notify/discord.js`
+
+### 雲端排程（GitHub Actions）
+
+到 GitHub repo → Settings → Secrets and variables → Actions，新增：
+- `DISCORD_WEBHOOK_URL` = 同上的 webhook URL
 
 ---
 
@@ -279,7 +281,8 @@ coupang-lego-monitor/
 │   ├── data/
 │   │   └── db.js          ← SQLite 操作
 │   ├── notify/
-│   │   ├── telegram.js    ← Telegram 通知
+│   │   ├── discord.js     ← Discord Webhook 通知（預設）
+│   │   ├── telegram.js    ← Telegram 通知（備用）
 │   │   ├── line-messaging.js  ← LINE Messaging API（備用）
 │   │   └── index.js       ← 通知入口（依 .env 選擇）
 │   └── utils/

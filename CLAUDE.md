@@ -35,7 +35,8 @@ Claude 會：
 | `src/crawler/brickeconomy.js` | 絕版品 MSRP 備援（Playwright） |
 | `src/reporter/weekly.js` | 週報（週二發送） |
 | `src/data/db.js` | SQLite（sql.js WASM）價格歷史 |
-| `src/notify/telegram.js` | Telegram 通知 |
+| `src/notify/discord.js` | Discord Webhook 通知（**預設**） |
+| `src/notify/telegram.js` | Telegram 通知（備用） |
 
 ## 折扣門檻
 - 一般品：6.4折（0.64）
@@ -48,7 +49,7 @@ Claude 會：
 - 雲端無 DB 歷史，只發即時警報，不發週報
 
 ## 待辦（未來）
-- [ ] 開發多用戶友善版（設定向導、自訂 watchlist、自己的 Telegram bot）
+- [ ] 開發多用戶友善版（設定向導、自訂 watchlist、自己的 Discord bot / webhook）
 
 ---
 

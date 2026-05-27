@@ -10,7 +10,7 @@
     "test:biggo": "node src/crawler/biggo.js",
     "test:coupang": "node src/crawler/coupang.js",
     "test:full": "node src/index.js --dry-run",
-    "test:notify": "node src/notify/telegram.js"
+    "test:notify": "node src/notify/discord.js"
   },
   "dependencies": {
     "sql.js": "^1.12.0",
