@@ -22,7 +22,7 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run LEGO price monitor
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          HEADLESS: 'true'
+          NOTIFY_CHANNEL: discord
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          HEADLESS: 'true
         run: node src/index.js
