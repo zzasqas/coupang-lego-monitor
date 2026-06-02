@@ -27,6 +27,8 @@
     "_comment": "PCHome 找不到時，從 BrickEconomy 查 USD 零售價再換算 TWD（EOL 品項定價備援）"
   },
   "schedule": {
+    "cron": "0 */4 * * *",
+    "_comment": "Railway always-on 用 node-cron；每 4 小時掃一次（時區由 TZ 環境變數決定，預設 Asia/Taipei）",
     "times": ["08:00", "20:00"]
   },
   "weekly_report": {

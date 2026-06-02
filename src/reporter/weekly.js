@@ -152,7 +152,7 @@ async function sendWeeklyReport(watchlistItems, pchomePrices, coupangWatchlist, 
   const wdays = ['週日','週一','週二','週三','週四','週五','週六'];
 
   let weekAlerts = 0;
-  try { weekAlerts = dbModule.getWeekAlertCount?.() ?? 0; } catch (_) {}
+  try { weekAlerts = (await dbModule.getWeekAlertCount?.()) ?? 0; } catch (_) {}
 
   const DIV    = '━━━━━━━━━━━━━━━';
   const header = `📊 <b>LEGO 監控週報</b> | ${dateStr} (${wdays[now.getDay()]})\n追蹤 ${watchlistItems.length} 項 · 本週警報 ${weekAlerts} 次`;
@@ -173,7 +173,7 @@ async function sendWeeklyReport(watchlistItems, pchomePrices, coupangWatchlist, 
     const sn        = w.set_number;
     const pInfo     = pchomePrices[sn] || {};
     const cItem     = coupangWatchlist[sn] || null;
-    const stats     = dbModule.getPriceStats(sn);
+    const stats     = await dbModule.getPriceStats(sn);
     const threshold = pInfo.isEol
       ? settings.thresholds.eol_item
       : settings.thresholds.normal_item;
