@@ -150,8 +150,8 @@ async function main() {
 
   // 註冊指令（失敗不阻擋啟動）
   try {
-    await registerCommands({ silent: true });
-    logger.info('[Bot] Slash 指令已註冊');
+    const r = await registerCommands({ silent: false });
+    logger.info(`[Bot] 指令註冊完成（全域：${r.globalOk ? 'OK' : 'X'}，伺服器：${r.guildOk ? 'OK' : 'X'}）`);
   } catch (err) {
     logger.error(`[Bot] 指令註冊失敗：${err.message}`);
   }
