@@ -1,6 +1,6 @@
 # Playwright 官方 image：已內建 Chromium + 系統依賴（避免 Nixpacks 缺庫問題）
-# 版本需與 package.json 的 playwright 版本對齊
-FROM mcr.microsoft.com/playwright:v1.44.0-jammy
+# ⚠️ 版本「必須」與 package.json 的 playwright 精確版本一致，否則找不到瀏覽器執行檔
+FROM mcr.microsoft.com/playwright:v1.59.1-jammy
 
 WORKDIR /app
 

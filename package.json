@@ -22,6 +22,6 @@
     "dotenv": "^16.4.5",
     "node-cron": "^3.0.3",
     "pg": "^8.13.1",
-    "playwright": "^1.44.0"
+    "playwright": "1.59.1"
   }
 }
