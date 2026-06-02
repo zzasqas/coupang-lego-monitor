@@ -168,9 +168,12 @@ async function runScan({ dryRun = false } = {}) {
   // ── Step 1: PCHome 定價 & 特價 ─────────────────────────────────────────────
   logger.info(`\n[Step 1] 取得 ${setNumbers.length} 個品項的 PCHome 定價（原價快取 40-50天 / 特價快取 2-3天）...`);
   const pchomePrices = {};
+  const manualEolSet = new Set(watchlistItems.filter(w => w.is_eol).map(w => w.set_number));
 
   for (const sn of setNumbers) {
     const p = await ensurePchomePrice(sn, dryRun);
+    // 手動絕版標註（watchlist.is_eol）→ 強制走絕版邏輯（閾值放寬）
+    if (manualEolSet.has(sn)) p.isEol = true;
     pchomePrices[sn] = p;
 
     if (p.isEol) {

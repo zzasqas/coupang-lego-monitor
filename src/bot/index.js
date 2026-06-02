@@ -20,6 +20,8 @@ const db       = require('../data/db');
 const settings = require('../../config/settings.json');
 const { runScan }          = require('../index');
 const { registerCommands } = require('./register');
+const { createContext, searchBySetNumber } = require('../crawler/biggo');
+const { analyze }                           = require('../analyzer/discount');
 
 const CRON_EXPR = settings.schedule?.cron || '0 */4 * * *';   // 預設每 4 小時
 const TZ        = process.env.TZ || 'Asia/Taipei';
@@ -46,100 +48,149 @@ async function safeScan(trigger = 'cron') {
 
 // ── 指令回覆輔助 ───────────────────────────────────────────────────────────────
 const isValidSet = (s) => /^\d{4,6}$/.test(s);
+const ephem = (content) => ({ content, ephemeral: true });
 
-// ── Slash 指令處理 ─────────────────────────────────────────────────────────────
+/** 立即現抓某一顆的 Coupang 售價（開一個瀏覽器查 BigGo） */
+async function liveCheckSet(sn) {
+  const { browser, context } = await createContext();
+  const page = await context.newPage();
+  try {
+    return await searchBySetNumber(page, sn);
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+// ── Slash 指令處理（全部在 /lego 底下） ────────────────────────────────────────
 async function handleCommand(interaction) {
-  const { commandName: cmd } = interaction;
-  const get = (n) => interaction.options.get(n)?.value;
+  if (interaction.commandName !== 'lego') {
+    return interaction.reply(ephem('未知指令'));
+  }
+  const sub = interaction.options.getSubcommand();
 
-  switch (cmd) {
+  switch (sub) {
     case 'add': {
-      const set  = String(get('set')).trim();
-      const note = (get('note') || '').toString().trim();
-      if (!isValidSet(set)) return interaction.reply({ content: '⚠️ 組號格式不對（4–6 位數字）', ephemeral: true });
+      const set  = (interaction.options.getString('set')  || '').trim();
+      const note = (interaction.options.getString('note') || '').trim();
+      if (!isValidSet(set)) return interaction.reply(ephem('⚠️ 組號格式不對（4–6 位數字）'));
       await db.addWatchItem(set, note);
-      return interaction.reply({ content: `✅ 已加入追蹤：**${set}**${note ? `（${note}）` : ''}`, ephemeral: true });
+      return interaction.reply(ephem(`✅ 已加入追蹤：**${set}**${note ? `（${note}）` : ''}`));
     }
 
     case 'remove': {
-      const set = String(get('set')).trim();
+      const set = (interaction.options.getString('set') || '').trim();
       const ok  = await db.removeWatchItem(set);
-      return interaction.reply({ content: ok ? `🗑️ 已移除：**${set}**` : `找不到 **${set}**`, ephemeral: true });
+      return interaction.reply(ephem(ok ? `🗑️ 已移除：**${set}**` : `找不到 **${set}**`));
     }
 
     case 'disable': {
-      const set = String(get('set')).trim();
+      const set = (interaction.options.getString('set') || '').trim();
       const ok  = await db.setWatchDisabled(set, true);
-      return interaction.reply({ content: ok ? `⏸️ 已暫停追蹤：**${set}**` : `找不到 **${set}**`, ephemeral: true });
+      return interaction.reply(ephem(ok ? `⏸️ 已暫停追蹤：**${set}**` : `找不到 **${set}**`));
     }
 
     case 'enable': {
-      const set = String(get('set')).trim();
+      const set = (interaction.options.getString('set') || '').trim();
       const ok  = await db.setWatchDisabled(set, false);
-      return interaction.reply({ content: ok ? `▶️ 已恢復追蹤：**${set}**` : `找不到 **${set}**`, ephemeral: true });
+      return interaction.reply(ephem(ok ? `▶️ 已恢復追蹤：**${set}**` : `找不到 **${set}**`));
     }
 
     case 'target': {
-      const set   = String(get('set')).trim();
-      const price = Number(get('price'));
+      const set   = (interaction.options.getString('set') || '').trim();
+      const price = interaction.options.getInteger('price');
       const item  = await db.getWatchItem(set);
-      if (!item) return interaction.reply({ content: `找不到 **${set}**，請先 /add`, ephemeral: true });
-      if (price <= 0) {
+      if (!item) return interaction.reply(ephem(`找不到 **${set}**，請先 /lego add`));
+      if (!price || price <= 0) {
         await db.setTargetPrice(set, null);
-        return interaction.reply({ content: `🎯 已清除 **${set}** 的目標價（改用全域閾值）`, ephemeral: true });
+        return interaction.reply(ephem(`🎯 已清除 **${set}** 的目標價（改用全域閾值）`));
       }
       await db.setTargetPrice(set, price);
-      return interaction.reply({ content: `🎯 **${set}** 目標價設為 **NT$${price.toLocaleString()}**`, ephemeral: true });
+      return interaction.reply(ephem(`🎯 **${set}** 目標價設為 **NT$${price.toLocaleString()}**`));
+    }
+
+    case 'eol': {
+      const set     = (interaction.options.getString('set') || '').trim();
+      const enabled = interaction.options.getBoolean('enabled');
+      const item    = await db.getWatchItem(set);
+      if (!item) return interaction.reply(ephem(`找不到 **${set}**，請先 /lego add`));
+      await db.setEol(set, enabled);
+      return interaction.reply(ephem(
+        enabled
+          ? `🏷️ 已標註 **${set}** 為絕版品（閾值放寬到 ${(settings.thresholds?.eol_item * 10 || 6.9).toFixed(1)} 折）`
+          : `🏷️ 已取消 **${set}** 的絕版標註（恢復自動判斷）`
+      ));
     }
 
     case 'list': {
       const items = await db.getWatchlist({ includeDisabled: true });
-      if (items.length === 0) return interaction.reply({ content: '清單是空的，用 /add 新增', ephemeral: true });
+      if (items.length === 0) return interaction.reply(ephem('清單是空的，用 `/lego add` 新增'));
       const lines = items.map((w) => {
         const tags = [];
         if (w.target_price) tags.push(`🎯NT$${w.target_price.toLocaleString()}`);
+        if (w.is_eol)       tags.push('🏷️絕版');
         if (w.disabled)     tags.push('⏸️停用');
         return `\`${w.set_number}\` ${w.note || ''}${tags.length ? '  ' + tags.join(' ') : ''}`.trimEnd();
       });
       const body = `📋 **追蹤清單（${items.length}）**\n` + lines.join('\n');
-      return interaction.reply({ content: body.slice(0, 1900), ephemeral: true });
+      return interaction.reply(ephem(body.slice(0, 1900)));
     }
 
     case 'price': {
-      const set = String(get('set')).trim();
+      const set = (interaction.options.getString('set') || '').trim();
+      if (!isValidSet(set)) return interaction.reply(ephem('⚠️ 組號格式不對（4–6 位數字）'));
       await interaction.deferReply({ ephemeral: true });
-      const item  = await db.getWatchItem(set);
-      const stats = await db.getPriceStats(set);
-      if (!stats.dataPoints) {
-        return interaction.editReply(`**${set}** 尚無價格紀錄${item ? '' : '（也不在追蹤清單）'}`);
+
+      const [item, stats, pch, live] = await Promise.all([
+        db.getWatchItem(set),
+        db.getPriceStats(set),
+        db.getLastPchomeRecord(set),
+        liveCheckSet(set).catch((e) => { logger.warn(`[price] live 失敗：${e.message}`); return null; }),
+      ]);
+
+      const ref   = pch?.original_price || live?.originalPrice || null;
+      const isEol = !!(item?.is_eol || pch?.is_eol);
+
+      const lines = [`🧱 **${set}**${item?.note ? ` ${item.note}` : ''}${isEol ? ' 🏷️絕版' : ''}`];
+
+      if (live?.price) {
+        lines.push(`🛒 Coupang 現價：**NT$${live.price.toLocaleString()}**（即時）`);
+        if (ref) {
+          const a = analyze({ coupangPrice: live.price, pchomeOriginal: ref, isEol, isWatchlist: true, targetPrice: item?.target_price || null });
+          lines.push(`📋 參考定價：NT$${ref.toLocaleString()}　📉 ${a.discountStr}`);
+          lines.push(a.shouldAlert ? `🔥 **達標！** ${a.reason}` : `🟢 未達標（${a.reason}）`);
+        }
+        if (live.coupangUrl) lines.push(`🔗 ${live.coupangUrl}`);
+      } else {
+        lines.push('🛒 Coupang 即時查詢：目前找不到上架（或暫時抓取失敗）');
       }
-      const lines = [
-        `🧱 **${set}**${item?.note ? ` ${item.note}` : ''}`,
-        stats.currentPrice  != null ? `現價：NT$${stats.currentPrice.toLocaleString()}` : '',
-        stats.allTimeLow    != null ? `歷史低：NT$${stats.allTimeLow.toLocaleString()}${stats.allTimeLowDate ? `（${stats.allTimeLowDate}）` : ''}` : '',
-        (stats.low30d != null && stats.high30d != null)
-          ? `30天區間：NT$${stats.low30d.toLocaleString()} ~ NT$${stats.high30d.toLocaleString()}` : '',
-        item?.target_price  ? `🎯 目標價：NT$${item.target_price.toLocaleString()}` : '',
-        stats.currentUrl    ? `🔗 ${stats.currentUrl}` : '',
-        `_資料點：${stats.dataPoints}_`,
-      ].filter(Boolean);
+
+      if (item?.target_price) lines.push(`🎯 目標價：NT$${item.target_price.toLocaleString()}`);
+      if (stats.dataPoints) {
+        if (stats.allTimeLow != null)
+          lines.push(`📈 歷史低：NT$${stats.allTimeLow.toLocaleString()}${stats.allTimeLowDate ? `（${stats.allTimeLowDate}）` : ''}`);
+        if (stats.low30d != null && stats.high30d != null)
+          lines.push(`📊 30天區間：NT$${stats.low30d.toLocaleString()} ~ NT$${stats.high30d.toLocaleString()}`);
+        lines.push(`_歷史資料點：${stats.dataPoints}_`);
+      } else {
+        lines.push('_尚無歷史資料（跑過 /lego scan 後會累積）_');
+      }
       return interaction.editReply(lines.join('\n'));
     }
 
     case 'scan': {
-      if (scanning) return interaction.reply({ content: '⏳ 已有掃描進行中，請稍候', ephemeral: true });
+      if (scanning) return interaction.reply(ephem('⏳ 已有掃描進行中，請稍候'));
       await interaction.deferReply({ ephemeral: true });
       try {
-        const r = await safeScan('discord /scan');
+        const r = await safeScan('discord /lego scan');
         return interaction.editReply(`✅ 掃描完成：掃描 ${r.scanned ?? '?'} 項，發現 ${r.alertCount ?? 0} 筆優惠`);
       } catch (err) {
-        logger.error(`[Scan] /scan 失敗：${err.message}`);
+        logger.error(`[Scan] /lego scan 失敗：${err.message}`);
         return interaction.editReply(`❌ 掃描失敗：${err.message}`);
       }
     }
 
     default:
-      return interaction.reply({ content: '未知指令', ephemeral: true });
+      return interaction.reply(ephem('未知子指令'));
   }
 }
 

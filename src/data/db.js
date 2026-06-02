@@ -250,7 +250,7 @@ async function saveAlertSent(setNumber, alertType, price, discountPct) {
 /** 取得 watchlist；預設只回未停用的，依組號數字排序 */
 async function getWatchlist({ includeDisabled = false } = {}) {
   const rows = await queryAll(
-    `SELECT set_number, note, target_price, disabled
+    `SELECT set_number, note, target_price, disabled, is_eol
      FROM watchlist
      ${includeDisabled ? '' : 'WHERE disabled = false'}
      ORDER BY set_number ASC`
@@ -260,6 +260,7 @@ async function getWatchlist({ includeDisabled = false } = {}) {
     note:         r.note || '',
     target_price: r.target_price != null ? Number(r.target_price) : null,
     disabled:     !!r.disabled,
+    is_eol:       !!r.is_eol,
   }));
 }
 
@@ -304,10 +305,19 @@ async function setTargetPrice(setNumber, price) {
   return rowCount > 0;
 }
 
+/** 手動標註 / 取消絕版；回傳是否有更新到 */
+async function setEol(setNumber, isEol) {
+  const { rowCount } = await query(
+    `UPDATE watchlist SET is_eol = $2, updated_at = now() WHERE set_number = $1`,
+    [setNumber, !!isEol]
+  );
+  return rowCount > 0;
+}
+
 /** 單筆查詢（含已停用） */
 async function getWatchItem(setNumber) {
   const row = await queryOne(
-    `SELECT set_number, note, target_price, disabled FROM watchlist WHERE set_number = $1`,
+    `SELECT set_number, note, target_price, disabled, is_eol FROM watchlist WHERE set_number = $1`,
     [setNumber]
   );
   if (!row) return null;
@@ -316,6 +326,7 @@ async function getWatchItem(setNumber) {
     note:         row.note || '',
     target_price: row.target_price != null ? Number(row.target_price) : null,
     disabled:     !!row.disabled,
+    is_eol:       !!row.is_eol,
   };
 }
 
@@ -339,6 +350,7 @@ module.exports = {
   removeWatchItem,
   setWatchDisabled,
   setTargetPrice,
+  setEol,
   getWatchItem,
 };
 

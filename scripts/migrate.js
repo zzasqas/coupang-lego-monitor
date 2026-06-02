@@ -58,9 +58,13 @@ CREATE TABLE IF NOT EXISTS watchlist (
   note         TEXT,
   target_price INTEGER,
   disabled     BOOLEAN DEFAULT false,
+  is_eol       BOOLEAN DEFAULT false,
   added_at     TIMESTAMPTZ DEFAULT now(),
   updated_at   TIMESTAMPTZ DEFAULT now()
 );
+
+-- 對既有資料庫補欄位（新建表已含，舊表才需要）
+ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS is_eol BOOLEAN DEFAULT false;
 `;
 
 async function main() {
