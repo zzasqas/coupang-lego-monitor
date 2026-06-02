@@ -69,6 +69,33 @@ async function handleCommand(interaction) {
   const sub = interaction.options.getSubcommand();
 
   switch (sub) {
+    case 'help': {
+      const cronExpr = settings.schedule?.cron || '0 */4 * * *';
+      const help = [
+        '🧱 **LEGO Monitor 指令說明**',
+        '─────────────────',
+        '**查詢**',
+        '`/lego list` — 列出追蹤清單（含目標價/絕版/停用標記）',
+        '`/lego price set:76452` — 立即現抓 Coupang 價 + 折扣 + 歷史低',
+        '`/lego scan` — 立刻手動掃描全部品項',
+        '',
+        '**維護清單**',
+        '`/lego add set:60404 note:城市系列` — 新增（note 可填系列/備註）',
+        '`/lego remove set:60404` — 永久移除',
+        '`/lego disable set:60404` / `/lego enable set:60404` — 暫停 / 恢復',
+        '',
+        '**價格與絕版**',
+        '`/lego target set:10316 price:3500` — 設目標價（price:0 = 清除）',
+        '`/lego eol set:76417 enabled:True` — 標註絕版（False = 取消）',
+        '',
+        '─────────────────',
+        `🔔 警報門檻：一般 ${(settings.thresholds?.normal_item * 10).toFixed(1)} 折／絕版 ${(settings.thresholds?.eol_item * 10).toFixed(1)} 折（有設目標價則以目標價為準）`,
+        `⏰ 自動掃描排程：\`${cronExpr}\`（${process.env.TZ || 'Asia/Taipei'}）`,
+        '📢 達標警報會發到通知頻道（Webhook）',
+      ].join('\n');
+      return interaction.reply(ephem(help));
+    }
+
     case 'add': {
       const set  = (interaction.options.getString('set')  || '').trim();
       const note = (interaction.options.getString('note') || '').trim();

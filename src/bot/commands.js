@@ -24,6 +24,7 @@ module.exports = [
     name: 'lego',
     description: '樂高 Coupang 價格監控',
     options: [
+      { type: 1, name: 'help',    description: '顯示所有指令說明' },
       { type: 1, name: 'list',    description: '列出目前追蹤清單' },
       { type: 1, name: 'add',     description: '新增追蹤品項（可附系列註記）', options: [setReq, noteOpt] },
       { type: 1, name: 'remove',  description: '永久移除追蹤品項', options: [setReq] },
