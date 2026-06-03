@@ -354,6 +354,17 @@ async function setEol(setNumber, isEol) {
   return rowCount > 0;
 }
 
+/** 用種子檔回填「空白 note」（不覆蓋 bot 已改過的 note）；回傳是否有更新到 */
+async function backfillEmptyNote(setNumber, note) {
+  if (!note) return false;
+  const { rowCount } = await query(
+    `UPDATE watchlist SET note = $2, updated_at = now()
+     WHERE set_number = $1 AND (note IS NULL OR note = '')`,
+    [setNumber, note]
+  );
+  return rowCount > 0;
+}
+
 /** 單筆查詢（含已停用） */
 async function getWatchItem(setNumber) {
   const row = await queryOne(
@@ -393,6 +404,7 @@ module.exports = {
   setWatchDisabled,
   setTargetPrice,
   setEol,
+  backfillEmptyNote,
   getWatchItem,
 };
 

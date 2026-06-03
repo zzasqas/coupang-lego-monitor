@@ -70,7 +70,12 @@ function formatScanResult(r) {
     const name   = a.name && a.name !== a.setNumber ? ` ${a.name}` : '';
     const ref    = a.ref ? `／定價NT$${a.ref.toLocaleString()}` : '';
     const price  = a.price != null ? `NT$${a.price.toLocaleString()}` : 'NT$?';
-    return `• \`${a.setNumber || '?'}\`${eol}${name} — ${srcTag} ${price}${ref}  **${a.discountStr || ''}**`;
+    // 連結：Coupang 用實際商品頁；PCHome 用搜尋頁（方便直接點擊購買）
+    const url    = a.source === 'pchome'
+      ? `https://24h.pchome.com.tw/search/?q=LEGO+${a.setNumber || ''}`
+      : a.url || null;
+    const link   = url ? `　[🔗前往](${url})` : '';
+    return `• \`${a.setNumber || '?'}\`${eol}${name} — ${srcTag} ${price}${ref}  **${a.discountStr || ''}**${link}`;
   };
 
   const parts = [
@@ -205,7 +210,10 @@ async function handleCommand(interaction) {
         const live     = priceMap[sn];
         const refPrice = refMap[sn]?.originalPrice || null;
 
-        // 最近一次掃描到的 Coupang 價（+ 對 PCHome 定價的折扣）
+        // 原價（PCHome 定價／建議售價）
+        const refStr = refPrice ? `　原價NT$${refPrice.toLocaleString()}` : '';
+
+        // 最近一次掃描到的 Coupang 價（+ 對原價的折扣）
         let priceStr = '🛒—';
         if (live?.price) {
           const d = refPrice && refPrice > 0 ? ` (${formatDiscount(live.price / refPrice)})` : '';
@@ -218,11 +226,11 @@ async function handleCommand(interaction) {
         if (w.disabled)     tags.push('⏸️停用');
 
         const note = w.note ? ` ${w.note}` : '';
-        return `\`${sn}\`${note}  ${priceStr}${tags.length ? '  ' + tags.join(' ') : ''}`.trimEnd();
+        return `\`${sn}\`${note}${refStr}　${priceStr}${tags.length ? '  ' + tags.join(' ') : ''}`.trimEnd();
       });
 
       const body =
-        `📋 **追蹤清單（${items.length}）**　🛒=最近一次掃描的 Coupang 價\n` +
+        `📋 **追蹤清單（${items.length}）**　原價=PCHome定價／🛒=最近一次掃描的 Coupang 價\n` +
         lines.join('\n');
       return interaction.editReply(body.slice(0, 1950));
     }
@@ -291,6 +299,18 @@ async function handleCommand(interaction) {
 async function main() {
   await db.initDb();
   logger.info('[Bot] DB 連線成功');
+
+  // 用 watchlist.json 回填「空白 note」（只補空的，不覆蓋 bot 改過的）
+  try {
+    const seed = require('../../config/watchlist.json');
+    let filled = 0;
+    for (const w of (seed.watchlist || [])) {
+      if (w?.set_number && w?.note && await db.backfillEmptyNote(String(w.set_number), w.note)) filled++;
+    }
+    if (filled) logger.info(`[Bot] 已用種子檔回填 ${filled} 筆空白備註`);
+  } catch (e) {
+    logger.warn(`[Bot] note 回填略過：${e.message}`);
+  }
 
   // 註冊指令（失敗不阻擋啟動）
   try {
