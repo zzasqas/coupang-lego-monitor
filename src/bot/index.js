@@ -48,7 +48,8 @@ async function safeScan(trigger = 'cron') {
 
 // ── 指令回覆輔助 ───────────────────────────────────────────────────────────────
 const isValidSet = (s) => /^\d{4,6}$/.test(s);
-const ephem = (content) => ({ content, ephemeral: true });
+// 公開回覆（會留存，方便查看與測試；如要改回私密，加上 ephemeral: true）
+const ephem = (content) => ({ content });
 
 /** 立即現抓某一顆的 Coupang 售價（開一個瀏覽器查 BigGo） */
 async function liveCheckSet(sn) {
@@ -165,7 +166,7 @@ async function handleCommand(interaction) {
     case 'price': {
       const set = (interaction.options.getString('set') || '').trim();
       if (!isValidSet(set)) return interaction.reply(ephem('⚠️ 組號格式不對（4–6 位數字）'));
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply();
 
       const [item, stats, pch, live] = await Promise.all([
         db.getWatchItem(set),
@@ -206,7 +207,7 @@ async function handleCommand(interaction) {
 
     case 'scan': {
       if (scanning) return interaction.reply(ephem('⏳ 已有掃描進行中，請稍候'));
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply();
       try {
         const r = await safeScan('discord /lego scan');
         return interaction.editReply(`✅ 掃描完成：掃描 ${r.scanned ?? '?'} 項，發現 ${r.alertCount ?? 0} 筆優惠`);
@@ -255,7 +256,7 @@ async function main() {
       await handleCommand(interaction);
     } catch (err) {
       logger.error(`[Bot] 指令 ${interaction.commandName} 錯誤：${err.message}`);
-      const msg = { content: `❌ 發生錯誤：${err.message}`, ephemeral: true };
+      const msg = { content: `❌ 發生錯誤：${err.message}` };
       if (interaction.deferred || interaction.replied) interaction.editReply(msg).catch(() => {});
       else interaction.reply(msg).catch(() => {});
     }
