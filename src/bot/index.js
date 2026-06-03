@@ -206,44 +206,60 @@ async function handleCommand(interaction) {
         db.getPchomeRefs(sets),
       ]);
 
-      // 手機友善版：兩行式，價格縮寫（去掉 NT$，用 $ 代替）
-      const $ = (n) => n != null ? `$${Number(n).toLocaleString()}` : null;
+      const p$ = (n) => n != null ? `$${Number(n).toLocaleString()}` : null;
 
-      const lines = [];
-      for (const w of items) {
+      const blocks = items.map((w) => {
         const sn      = w.set_number;
         const live    = priceMap[sn];
         const ref     = refMap[sn]?.originalPrice || null;
-        const pchSale = refMap[sn]?.salePrice && refMap[sn].salePrice < ref
+        const pchSale = (refMap[sn]?.salePrice && ref && refMap[sn].salePrice < ref)
           ? refMap[sn].salePrice : null;
 
-        // 標記
-        const tags = [
-          w.is_eol       ? '🏷️絕版'  : '',
-          w.target_price ? `🎯${$(w.target_price)}` : '',
-          w.disabled     ? '⏸️停用' : '',
-        ].filter(Boolean).join(' ');
+        // ── 旗標行 ──────────────────────────────────────────────
+        const flags = [
+          w.is_eol       ? '🏷️ 絕版'              : '',
+          w.target_price ? `🎯 目標 ${p$(w.target_price)}` : '',
+          w.disabled     ? '⏸️ 停用'               : '',
+        ].filter(Boolean).join('　');
 
-        // 第一行：組號 + 備註 + 標記
-        const note = w.note ? ` ${w.note}` : '';
-        lines.push(`\`${sn}\`${note}${tags ? '  ' + tags : ''}`);
+        // ── 第一行：組號 + 備註（+ 旗標若有）───────────────────
+        const note   = w.note || sn;
+        const header = `**${sn}** ${note}${flags ? '　' + flags : ''}`;
 
-        // 第二行：定價 → PChome現售 → Coupang價(折扣)，只顯示有的欄位
-        const parts = [];
-        if (ref) {
-          parts.push(pchSale ? `定${$(ref)}→🏪${$(pchSale)}` : `定${$(ref)}`);
-        }
+        // ── 第二行：價格三欄 ─────────────────────────────────────
+        // 定價（MSRP）
+        const msrpStr = ref ? `定價 ${p$(ref)}` : '定價 —';
+        // PChome 現售（有且低於定價才顯示）
+        const pcStr   = pchSale ? `PChome ${p$(pchSale)}` : null;
+        // Coupang 最近掃描（含折扣）
+        let coupangStr;
         if (live?.price) {
-          const disc = ref ? `(${formatDiscount(live.price / ref)})` : '';
-          parts.push(`🛒${$(live.price)}${disc}`);
+          const disc = ref ? ` (${formatDiscount(live.price / ref)})` : '';
+          // 若 Coupang > PChome → 標示貴
+          const cheaper = pchSale && live.price > pchSale ? ' ↑貴' : '';
+          coupangStr = `Coupang ${p$(live.price)}${disc}${cheaper}`;
         } else {
-          parts.push('🛒—');
+          coupangStr = 'Coupang —';
         }
-        lines.push(`  ${parts.join('  ')}`);
-      }
 
-      const header = `📋 **追蹤清單（${items.length}）** 定=PCHome定價 🏪=現售 🛒=Coupang`;
-      return interaction.editReply((header + '\n' + lines.join('\n')).slice(0, 1950));
+        const priceRow = [msrpStr, pcStr, coupangStr].filter(Boolean).join('　|　');
+
+        return header + '\n' + priceRow;
+      });
+
+      const title  = `📋 **追蹤清單（${items.length}）**`;
+      const legend = '_定價=建議售價　PChome=現售　Coupang=最近一次掃描_';
+      const body   = [title, legend, '', ...blocks].join('\n\n');
+
+      // 超過限制時分兩則回覆
+      if (body.length <= 1950) {
+        return interaction.editReply(body);
+      }
+      const mid   = Math.ceil(blocks.length / 2);
+      const part1 = [title, legend, '', ...blocks.slice(0, mid)].join('\n\n');
+      const part2 = blocks.slice(mid).join('\n\n') + '\n_（續）_';
+      await interaction.editReply(part1);
+      return interaction.followUp(part2);
     }
 
     case 'price': {
