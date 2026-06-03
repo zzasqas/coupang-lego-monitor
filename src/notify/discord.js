@@ -176,6 +176,10 @@ async function sendAlert(item, analysis) {
       ? `🏪 PCHome 特價：**NT$${item.coupangPrice?.toLocaleString()}**`
       : `🛒 Coupang 現售：**NT$${item.coupangPrice?.toLocaleString()}**`,
     `📋 PCHome 定價：NT$${item.pchomeOriginal?.toLocaleString()}`,
+    // Coupang 警報時，若 PChome 有現售價也一併列出，方便比價
+    (!isPchome && item.pchomeSale && item.pchomeSale < item.pchomeOriginal)
+      ? `🏪 PCHome 現售：NT$${item.pchomeSale.toLocaleString()}`
+      : '',
     `📉 折扣：**${analysis.discountStr}**（${analysis.reason}）`,
   ];
 

@@ -269,6 +269,7 @@ async function runScan({ dryRun = false } = {}) {
     const analysis = analyze({
       coupangPrice:   coupangItem.price,
       pchomeOriginal: refPrice,
+      pchomeSale:     pInfo.salePrice || null,
       isEol:          pInfo.isEol,
       isWatchlist:    true,
       targetPrice:    w.target_price || null,
@@ -298,6 +299,7 @@ async function runScan({ dryRun = false } = {}) {
           name:           coupangItem.name,
           coupangPrice:   coupangItem.price,
           pchomeOriginal: refPrice,
+          pchomeSale:     pInfo.salePrice || null,
           isEol:          pInfo.isEol,
           coupangUrl:     coupangItem.coupangUrl,
           source:         'coupang',

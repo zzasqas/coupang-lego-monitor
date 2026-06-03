@@ -209,9 +209,11 @@ async function handleCommand(interaction) {
         const sn       = w.set_number;
         const live     = priceMap[sn];
         const refPrice = refMap[sn]?.originalPrice || null;
+        const pchSale  = refMap[sn]?.salePrice || null;
 
-        // 原價（PCHome 定價／建議售價）
-        const refStr = refPrice ? `　原價NT$${refPrice.toLocaleString()}` : '';
+        // 原價（PCHome 定價／建議售價）＋ PChome 現售（若更低）
+        const saleStr = (pchSale && refPrice && pchSale < refPrice) ? `→🏪NT$${pchSale.toLocaleString()}` : '';
+        const refStr  = refPrice ? `　原價NT$${refPrice.toLocaleString()}${saleStr}` : '';
 
         // 最近一次掃描到的 Coupang 價（+ 對原價的折扣）
         let priceStr = '🛒—';
@@ -230,7 +232,7 @@ async function handleCommand(interaction) {
       });
 
       const body =
-        `📋 **追蹤清單（${items.length}）**　原價=PCHome定價／🛒=最近一次掃描的 Coupang 價\n` +
+        `📋 **追蹤清單（${items.length}）**　原價=PCHome定價／🏪=PChome現售／🛒=最近掃描的 Coupang 價\n` +
         lines.join('\n');
       return interaction.editReply(body.slice(0, 1950));
     }
@@ -247,16 +249,18 @@ async function handleCommand(interaction) {
         liveCheckSet(set).catch((e) => { logger.warn(`[price] live 失敗：${e.message}`); return null; }),
       ]);
 
-      const ref   = pch?.original_price || live?.originalPrice || null;
-      const isEol = !!(item?.is_eol || pch?.is_eol);
+      const ref       = pch?.original_price || live?.originalPrice || null;
+      const pchSale   = pch?.sale_price && pch.sale_price < ref ? pch.sale_price : null;
+      const isEol     = !!(item?.is_eol || pch?.is_eol);
 
       const lines = [`🧱 **${set}**${item?.note ? ` ${item.note}` : ''}${isEol ? ' 🏷️絕版' : ''}`];
 
       if (live?.price) {
         lines.push(`🛒 Coupang 現價：**NT$${live.price.toLocaleString()}**（即時）`);
         if (ref) {
-          const a = analyze({ coupangPrice: live.price, pchomeOriginal: ref, isEol, isWatchlist: true, targetPrice: item?.target_price || null });
+          const a = analyze({ coupangPrice: live.price, pchomeOriginal: ref, pchomeSale: pchSale, isEol, isWatchlist: true, targetPrice: item?.target_price || null });
           lines.push(`📋 參考定價：NT$${ref.toLocaleString()}　📉 ${a.discountStr}`);
+          if (pchSale) lines.push(`🏪 PCHome 現售：NT$${pchSale.toLocaleString()}`);
           lines.push(a.shouldAlert ? `🔥 **達標！** ${a.reason}` : `🟢 未達標（${a.reason}）`);
         }
         if (live.coupangUrl) lines.push(`🔗 ${live.coupangUrl}`);
