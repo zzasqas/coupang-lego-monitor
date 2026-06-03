@@ -365,7 +365,7 @@ async function expirePchomeCache() {
     `UPDATE pchome_prices
      SET expires_at = now() - interval '1 second',
          sale_price_expires_at = now() - interval '1 second',
-         is_eol = false`
+         is_eol = 0`
   );
   return rowCount;
 }
