@@ -354,6 +354,22 @@ async function setEol(setNumber, isEol) {
   return rowCount > 0;
 }
 
+/**
+ * 把 pchome_prices 的 expires_at 全部設成 now()，
+ * 讓下一次掃描對每個品項都重新爬 PCHome（修正錯誤快取用）。
+ * 同時清除被錯標為 EOL 的旗標（is_eol = false），讓掃描重新判斷。
+ * @returns {number} 更新的筆數
+ */
+async function expirePchomeCache() {
+  const { rowCount } = await query(
+    `UPDATE pchome_prices
+     SET expires_at = now() - interval '1 second',
+         sale_price_expires_at = now() - interval '1 second',
+         is_eol = false`
+  );
+  return rowCount;
+}
+
 /** 用種子檔回填「空白 note」（不覆蓋 bot 已改過的 note）；回傳是否有更新到 */
 async function backfillEmptyNote(setNumber, note) {
   if (!note) return false;
@@ -404,6 +420,7 @@ module.exports = {
   setWatchDisabled,
   setTargetPrice,
   setEol,
+  expirePchomeCache,
   backfillEmptyNote,
   getWatchItem,
 };

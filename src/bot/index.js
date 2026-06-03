@@ -133,6 +133,7 @@ async function handleCommand(interaction) {
         '**價格與絕版**',
         '`/lego target set:10316 price:3500` — 設目標價（price:0 = 清除）',
         '`/lego eol set:76417 enabled:True` — 標註絕版（False = 取消）',
+        '`/lego resetcache` — 清除 PCHome 定價快取，下次掃描重抓（原價顯示錯誤時用）',
         '',
         '─────────────────',
         `🔔 警報門檻：一般 ${(settings.thresholds?.normal_item * 10).toFixed(1)} 折／絕版 ${(settings.thresholds?.eol_item * 10).toFixed(1)} 折（有設目標價則以目標價為準）`,
@@ -205,36 +206,44 @@ async function handleCommand(interaction) {
         db.getPchomeRefs(sets),
       ]);
 
-      const lines = items.map((w) => {
-        const sn       = w.set_number;
-        const live     = priceMap[sn];
-        const refPrice = refMap[sn]?.originalPrice || null;
-        const pchSale  = refMap[sn]?.salePrice || null;
+      // 手機友善版：兩行式，價格縮寫（去掉 NT$，用 $ 代替）
+      const $ = (n) => n != null ? `$${Number(n).toLocaleString()}` : null;
 
-        // 原價（PCHome 定價／建議售價）＋ PChome 現售（若更低）
-        const saleStr = (pchSale && refPrice && pchSale < refPrice) ? `→🏪NT$${pchSale.toLocaleString()}` : '';
-        const refStr  = refPrice ? `　原價NT$${refPrice.toLocaleString()}${saleStr}` : '';
+      const lines = [];
+      for (const w of items) {
+        const sn      = w.set_number;
+        const live    = priceMap[sn];
+        const ref     = refMap[sn]?.originalPrice || null;
+        const pchSale = refMap[sn]?.salePrice && refMap[sn].salePrice < ref
+          ? refMap[sn].salePrice : null;
 
-        // 最近一次掃描到的 Coupang 價（+ 對原價的折扣）
-        let priceStr = '🛒—';
-        if (live?.price) {
-          const d = refPrice && refPrice > 0 ? ` (${formatDiscount(live.price / refPrice)})` : '';
-          priceStr = `🛒NT$${live.price.toLocaleString()}${d}`;
-        }
+        // 標記
+        const tags = [
+          w.is_eol       ? '🏷️絕版'  : '',
+          w.target_price ? `🎯${$(w.target_price)}` : '',
+          w.disabled     ? '⏸️停用' : '',
+        ].filter(Boolean).join(' ');
 
-        const tags = [];
-        if (w.target_price) tags.push(`🎯NT$${w.target_price.toLocaleString()}`);
-        if (w.is_eol)       tags.push('🏷️絕版');
-        if (w.disabled)     tags.push('⏸️停用');
-
+        // 第一行：組號 + 備註 + 標記
         const note = w.note ? ` ${w.note}` : '';
-        return `\`${sn}\`${note}${refStr}　${priceStr}${tags.length ? '  ' + tags.join(' ') : ''}`.trimEnd();
-      });
+        lines.push(`\`${sn}\`${note}${tags ? '  ' + tags : ''}`);
 
-      const body =
-        `📋 **追蹤清單（${items.length}）**　原價=PCHome定價／🏪=PChome現售／🛒=最近掃描的 Coupang 價\n` +
-        lines.join('\n');
-      return interaction.editReply(body.slice(0, 1950));
+        // 第二行：定價 → PChome現售 → Coupang價(折扣)，只顯示有的欄位
+        const parts = [];
+        if (ref) {
+          parts.push(pchSale ? `定${$(ref)}→🏪${$(pchSale)}` : `定${$(ref)}`);
+        }
+        if (live?.price) {
+          const disc = ref ? `(${formatDiscount(live.price / ref)})` : '';
+          parts.push(`🛒${$(live.price)}${disc}`);
+        } else {
+          parts.push('🛒—');
+        }
+        lines.push(`  ${parts.join('  ')}`);
+      }
+
+      const header = `📋 **追蹤清單（${items.length}）** 定=PCHome定價 🏪=現售 🛒=Coupang`;
+      return interaction.editReply((header + '\n' + lines.join('\n')).slice(0, 1950));
     }
 
     case 'price': {
@@ -292,6 +301,16 @@ async function handleCommand(interaction) {
         logger.error(`[Scan] /lego scan 失敗：${err.message}`);
         return interaction.editReply(`❌ 掃描失敗：${err.message}`);
       }
+    }
+
+    case 'resetcache': {
+      await interaction.deferReply();
+      const n = await db.expirePchomeCache();
+      return interaction.editReply(
+        `🔄 已清除 ${n} 筆 PCHome 定價快取（包含錯誤的絕版標記）\n` +
+        `下次 /lego scan 時會重新爬取所有品項的最新定價。\n` +
+        `建議清除後立刻執行 /lego scan。`
+      );
     }
 
     default:

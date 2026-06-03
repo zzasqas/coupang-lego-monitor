@@ -32,8 +32,9 @@ module.exports = [
       { type: 1, name: 'enable',  description: '恢復追蹤', options: [setReq] },
       { type: 1, name: 'target',  description: '設定目標價（0 = 清除）', options: [setReq, priceReq] },
       { type: 1, name: 'eol',     description: '手動標註 / 取消絕版品', options: [setReq, eolReq] },
-      { type: 1, name: 'price',   description: '立即現抓某品項的 Coupang 售價', options: [setReq] },
-      { type: 1, name: 'scan',    description: '立即手動觸發一次全品項掃描' },
+      { type: 1, name: 'price',      description: '立即現抓某品項的 Coupang 售價', options: [setReq] },
+      { type: 1, name: 'scan',       description: '立即手動觸發一次全品項掃描' },
+      { type: 1, name: 'resetcache', description: '清除 PCHome 定價快取，下次掃描強制重抓（修正錯誤原價用）' },
     ],
   },
 ];
