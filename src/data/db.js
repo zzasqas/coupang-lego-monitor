@@ -219,6 +219,45 @@ async function getPriceStats(setNumber) {
   };
 }
 
+/** 批次取每個組號「最新一筆」Coupang 價（給 /lego list 顯示用，不現抓） */
+async function getLatestPrices(setNumbers) {
+  if (!setNumbers || setNumbers.length === 0) return {};
+  const rows = await queryAll(`
+    SELECT DISTINCT ON (set_number) set_number, price, coupang_url, scraped_at
+    FROM price_history
+    WHERE set_number = ANY($1)
+    ORDER BY set_number, scraped_at DESC
+  `, [setNumbers]);
+  const map = {};
+  for (const r of rows) {
+    map[r.set_number] = {
+      price:      r.price != null ? Number(r.price) : null,
+      coupangUrl: r.coupang_url || null,
+      scrapedAt:  r.scraped_at || null,
+    };
+  }
+  return map;
+}
+
+/** 批次取每個組號的 PCHome 參考定價 / 特價 / 絕版（不過濾過期，給清單顯示用） */
+async function getPchomeRefs(setNumbers) {
+  if (!setNumbers || setNumbers.length === 0) return {};
+  const rows = await queryAll(`
+    SELECT set_number, original_price, sale_price, is_eol
+    FROM pchome_prices
+    WHERE set_number = ANY($1)
+  `, [setNumbers]);
+  const map = {};
+  for (const r of rows) {
+    map[r.set_number] = {
+      originalPrice: r.original_price != null ? Number(r.original_price) : null,
+      salePrice:     r.sale_price != null ? Number(r.sale_price) : null,
+      isEol:         !!r.is_eol,
+    };
+  }
+  return map;
+}
+
 // ── 通知紀錄 ──────────────────────────────────────────────────────────────────
 
 /** 過去 7 天發送的警報總數 */
@@ -341,6 +380,8 @@ module.exports = {
   updateSalePriceCache,
   savePrice,
   getLastPrice,
+  getLatestPrices,
+  getPchomeRefs,
   getPriceStats,
   getWeekAlertCount,
   wasAlertSentRecently,

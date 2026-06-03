@@ -380,7 +380,22 @@ async function runScan({ dryRun = false } = {}) {
   }
 
   logger.info('====== 執行完畢 ======\n');
-  return { alertCount: alerts.length, scanned: setNumbers.length };
+  return {
+    alertCount: alerts.length,
+    scanned:    setNumbers.length,
+    // 供 Discord /lego scan 回覆顯示（不含發到 webhook 的完整內容）
+    alerts: alerts.map(({ item, analysis }) => ({
+      setNumber:   item.setNumber || null,
+      name:        item.name || item.setNumber || '?',
+      price:       item.coupangPrice ?? null,
+      ref:         item.pchomeOriginal ?? null,
+      discountStr: analysis.discountStr || null,
+      source:      item.source,            // 'pchome' | 'coupang'
+      alertType:   analysis.alertType,     // 'A' 清單Coupang / 'P' PCHome特價 / 'B' 廣域
+      isEol:       !!item.isEol,
+      url:         item.coupangUrl || null,
+    })),
+  };
 }
 
 module.exports = { runScan };

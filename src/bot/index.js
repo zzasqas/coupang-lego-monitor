@@ -21,7 +21,7 @@ const settings = require('../../config/settings.json');
 const { runScan }          = require('../index');
 const { registerCommands } = require('./register');
 const { createContext, searchBySetNumber } = require('../crawler/biggo');
-const { analyze }                           = require('../analyzer/discount');
+const { analyze, formatDiscount }           = require('../analyzer/discount');
 
 const CRON_EXPR = settings.schedule?.cron || '0 */4 * * *';   // 預設每 4 小時
 const TZ        = process.env.TZ || 'Asia/Taipei';
@@ -51,6 +51,46 @@ const isValidSet = (s) => /^\d{4,6}$/.test(s);
 // 公開回覆（會留存，方便查看與測試；如要改回私密，加上 ephemeral: true）
 const ephem = (content) => ({ content });
 
+/** 把 runScan() 的結果整理成 Discord /lego scan 的回覆文字 */
+function formatScanResult(r) {
+  const alerts  = r.alerts || [];
+  const scanned = r.scanned ?? '?';
+
+  if (alerts.length === 0) {
+    return `✅ 掃描完成：${scanned} 項，目前沒有達標優惠 🙁`;
+  }
+
+  // 分組：清單命中（A=Coupang 清單 / P=PCHome 特價）vs 廣域掃描（B，非清單，僅供參考）
+  const watch = alerts.filter((a) => a.alertType === 'A' || a.alertType === 'P');
+  const broad = alerts.filter((a) => a.alertType === 'B');
+
+  const fmt = (a) => {
+    const srcTag = a.source === 'pchome' ? '🏪PCHome' : '🛒Coupang';
+    const eol    = a.isEol ? '🏷️' : '';
+    const name   = a.name && a.name !== a.setNumber ? ` ${a.name}` : '';
+    const ref    = a.ref ? `／定價NT$${a.ref.toLocaleString()}` : '';
+    const price  = a.price != null ? `NT$${a.price.toLocaleString()}` : 'NT$?';
+    return `• \`${a.setNumber || '?'}\`${eol}${name} — ${srcTag} ${price}${ref}  **${a.discountStr || ''}**`;
+  };
+
+  const parts = [
+    `✅ 掃描完成：${scanned} 項，發現 ${alerts.length} 筆優惠` +
+      `（🎯清單 ${watch.length} 筆／🔥廣域 ${broad.length} 筆）`,
+  ];
+
+  if (watch.length) {
+    parts.push('', '__🎯 追蹤清單命中__', ...watch.map(fmt));
+  }
+  if (broad.length) {
+    parts.push('', '__🔥 廣域掃描（非你的清單，比對 Coupang 自家原價，僅供參考）__');
+    parts.push(...broad.slice(0, 8).map(fmt));
+    if (broad.length > 8) parts.push(`…還有 ${broad.length - 8} 筆`);
+  }
+  parts.push('', '_完整警報（含連結）已發到通知頻道_');
+
+  return parts.join('\n').slice(0, 1950);
+}
+
 /** 立即現抓某一顆的 Coupang 售價（開一個瀏覽器查 BigGo） */
 async function liveCheckSet(sn) {
   const { browser, context } = await createContext();
@@ -76,7 +116,7 @@ async function handleCommand(interaction) {
         '🧱 **LEGO Monitor 指令說明**',
         '─────────────────',
         '**查詢**',
-        '`/lego list` — 列出追蹤清單（含目標價/絕版/停用標記）',
+        '`/lego list` — 列出追蹤清單（含最近掃描的 Coupang 價/折扣/目標價/絕版標記）',
         '`/lego price set:76452` — 立即現抓 Coupang 價 + 折扣 + 歷史低',
         '`/lego scan` — 立刻手動掃描全部品項',
         '',
@@ -150,17 +190,41 @@ async function handleCommand(interaction) {
     }
 
     case 'list': {
+      await interaction.deferReply();
       const items = await db.getWatchlist({ includeDisabled: true });
-      if (items.length === 0) return interaction.reply(ephem('清單是空的，用 `/lego add` 新增'));
+      if (items.length === 0) return interaction.editReply('清單是空的，用 `/lego add` 新增');
+
+      const sets = items.map((w) => w.set_number);
+      const [priceMap, refMap] = await Promise.all([
+        db.getLatestPrices(sets),
+        db.getPchomeRefs(sets),
+      ]);
+
       const lines = items.map((w) => {
+        const sn       = w.set_number;
+        const live     = priceMap[sn];
+        const refPrice = refMap[sn]?.originalPrice || null;
+
+        // 最近一次掃描到的 Coupang 價（+ 對 PCHome 定價的折扣）
+        let priceStr = '🛒—';
+        if (live?.price) {
+          const d = refPrice && refPrice > 0 ? ` (${formatDiscount(live.price / refPrice)})` : '';
+          priceStr = `🛒NT$${live.price.toLocaleString()}${d}`;
+        }
+
         const tags = [];
         if (w.target_price) tags.push(`🎯NT$${w.target_price.toLocaleString()}`);
         if (w.is_eol)       tags.push('🏷️絕版');
         if (w.disabled)     tags.push('⏸️停用');
-        return `\`${w.set_number}\` ${w.note || ''}${tags.length ? '  ' + tags.join(' ') : ''}`.trimEnd();
+
+        const note = w.note ? ` ${w.note}` : '';
+        return `\`${sn}\`${note}  ${priceStr}${tags.length ? '  ' + tags.join(' ') : ''}`.trimEnd();
       });
-      const body = `📋 **追蹤清單（${items.length}）**\n` + lines.join('\n');
-      return interaction.reply(ephem(body.slice(0, 1900)));
+
+      const body =
+        `📋 **追蹤清單（${items.length}）**　🛒=最近一次掃描的 Coupang 價\n` +
+        lines.join('\n');
+      return interaction.editReply(body.slice(0, 1950));
     }
 
     case 'price': {
@@ -210,7 +274,8 @@ async function handleCommand(interaction) {
       await interaction.deferReply();
       try {
         const r = await safeScan('discord /lego scan');
-        return interaction.editReply(`✅ 掃描完成：掃描 ${r.scanned ?? '?'} 項，發現 ${r.alertCount ?? 0} 筆優惠`);
+        if (r.skipped) return interaction.editReply('⏳ 已有掃描進行中，請稍候再試');
+        return interaction.editReply(formatScanResult(r));
       } catch (err) {
         logger.error(`[Scan] /lego scan 失敗：${err.message}`);
         return interaction.editReply(`❌ 掃描失敗：${err.message}`);
