@@ -250,7 +250,7 @@ async function saveAlertSent(setNumber, alertType, price, discountPct) {
 /** 取得 watchlist；預設只回未停用的，依組號數字排序 */
 async function getWatchlist({ includeDisabled = false } = {}) {
   const rows = await queryAll(
-    `SELECT set_number, note, target_price, disabled, is_eol
+    `SELECT set_number, note, target_price, disabled, is_eol, pchome_id
      FROM watchlist
      ${includeDisabled ? '' : 'WHERE disabled = false'}
      ORDER BY set_number ASC`
@@ -261,6 +261,7 @@ async function getWatchlist({ includeDisabled = false } = {}) {
     target_price: r.target_price != null ? Number(r.target_price) : null,
     disabled:     !!r.disabled,
     is_eol:       !!r.is_eol,
+    pchome_id:    r.pchome_id || null,
   }));
 }
 

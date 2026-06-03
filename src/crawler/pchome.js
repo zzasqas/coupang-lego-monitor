@@ -17,7 +17,8 @@ const { chromium } = require('playwright');
 const path = require('path');
 const logger = require('../utils/logger');
 
-const PCHOME_SEARCH = 'https://24h.pchome.com.tw/search/?q=LEGO+';
+const PCHOME_SEARCH  = 'https://24h.pchome.com.tw/search/?q=LEGO+';
+const PCHOME_PROD   = 'https://24h.pchome.com.tw/prod/';
 const DEBUG_DIR = path.join(__dirname, '../../screenshots');
 
 function delay(ms) {
@@ -34,10 +35,64 @@ async function saveScreenshot(page, name) {
 }
 
 /**
- * @param {string} setNumber  e.g. "76452"
+ * 直接從商品頁抓價格（當 pchomeId 已知時使用，繞過搜尋匹配問題）
+ * @param {object} page  Playwright page instance
+ * @param {string} pchomeId  e.g. "DEDJ0R-A900ITNL3"
+ */
+async function scrapeProductPage(page, pchomeId) {
+  const url = PCHOME_PROD + pchomeId;
+  logger.info(`[PCHome] 直接抓商品頁 ${pchomeId} → ${url}`);
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await delay(2000);
+
+  return page.evaluate(() => {
+    // 商品名稱
+    const nameEl = document.querySelector(
+      'h1.o-prodMainHeaderV2__name, h1.c-prodMainInfoV2__name, h1[class*="prodName"], h1'
+    );
+    const name = nameEl?.textContent?.trim() || '';
+
+    // 價格抓取：PCHome 商品頁有多種版型，嘗試常見 selector
+    const getText = (sel) =>
+      document.querySelector(sel)?.textContent?.replace(/[^0-9]/g, '') || '';
+
+    // 原價（劃線定價）
+    const origRaw =
+      getText('.o-prodDtlB__priceSlash') ||
+      getText('.c-prodDtlB__priceSlash') ||
+      getText('[class*="priceSlash"]') ||
+      getText('[class*="originPrice"]') ||
+      getText('.price del');
+
+    // 現售價
+    const saleRaw =
+      getText('.o-prodDtlB__priceVal') ||
+      getText('.c-prodDtlB__priceVal') ||
+      getText('[class*="priceVal"]:not([class*="Slash"])') ||
+      getText('[class*="salePrice"]:not([class*="Slash"])') ||
+      getText('.price strong');
+
+    const originalPrice = origRaw ? parseInt(origRaw, 10) : null;
+    const salePrice     = saleRaw ? parseInt(saleRaw,  10) : null;
+    const refPrice      = originalPrice || salePrice;
+
+    if (!refPrice) return { found: false, reason: 'no_price_on_product_page' };
+
+    return {
+      found: true,
+      name,
+      originalPrice: refPrice,
+      salePrice: salePrice !== refPrice ? salePrice : null,
+    };
+  });
+}
+
+/**
+ * @param {string} setNumber   e.g. "76452"
+ * @param {string} [pchomeId]  PCHome 商品 ID，e.g. "DEDJ0R-A900ITNL3"（選填，有的話直接抓商品頁）
  * @returns {{ found: boolean, originalPrice?: number, salePrice?: number, name?: string }}
  */
-async function getPchomePrice(setNumber) {
+async function getPchomePrice(setNumber, pchomeId) {
   const headless = process.env.HEADLESS !== 'false';
   const browser = await chromium.launch({ headless });
   const context = await browser.newContext({
@@ -49,6 +104,22 @@ async function getPchomePrice(setNumber) {
   const page = await context.newPage();
 
   try {
+    // ── 優先：有直接商品 ID → 跳過搜尋，直接抓商品頁 ────────────────────────
+    if (pchomeId) {
+      const result = await scrapeProductPage(page, pchomeId);
+      if (result.found) {
+        logger.info(
+          `[PCHome] ${setNumber}(${pchomeId}) → 定價 NT$${result.originalPrice}` +
+          (result.salePrice ? `（現售 NT$${result.salePrice}）` : '')
+        );
+      } else {
+        logger.warn(`[PCHome] ${setNumber}(${pchomeId}) 商品頁解析失敗（${result.reason}），fallback 搜尋`);
+      }
+      if (result.found) return result;
+      // fallthrough 到搜尋
+    }
+
+    // ── 一般：搜尋 ────────────────────────────────────────────────────────────
     const url = PCHOME_SEARCH + encodeURIComponent(setNumber);
     logger.info(`[PCHome] 查詢 ${setNumber} → ${url}`);
 

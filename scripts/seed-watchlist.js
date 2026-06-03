@@ -31,14 +31,15 @@ async function main() {
   try {
     for (const w of items) {
       const { rowCount } = await pool.query(
-        `INSERT INTO watchlist (set_number, note, target_price, disabled)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO watchlist (set_number, note, target_price, disabled, pchome_id)
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT(set_number) DO NOTHING`,
         [
           String(w.set_number),
           w.note || null,
           w.target_price ?? null,
           w.disabled === true,
+          w.pchome_id || null,
         ]
       );
       if (rowCount > 0) inserted++;

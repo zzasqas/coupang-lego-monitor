@@ -44,7 +44,7 @@ const OFFSET_PCHOME  = settings.thresholds.pchome_sale_offset ?? 0.01;   // +0.1
  *  2. 原價有效、特價過期 → 只重抓特價（BrickEconomy 來源跳過，沒有特價）
  *  3. 原價過期（含全新品項）→ 全部重抓，兩個 TTL 一起更新
  */
-async function ensurePchomePrice(setNumber, dryRun) {
+async function ensurePchomePrice(setNumber, dryRun, pchomeId) {
   const cached = await db.getPchomePrice(setNumber);
   const now    = new Date();
 
@@ -55,7 +55,7 @@ async function ensurePchomePrice(setNumber, dryRun) {
 
   // ── 情況 1：全部快取有效 ──────────────────────────────────────────────────
   if (!originalExpired && !saleExpired) {
-    logger.debug(`[Cache] ${setNumber} 快取全部有效（原價到期：${cached.expires_at?.slice(0,10)}，特價到期：${cached.sale_price_expires_at?.slice(0,10)}）`);
+    logger.debug(`[Cache] ${setNumber} 快取全部有效（原價到期：${cached.expires_at ? new Date(cached.expires_at).toISOString().slice(0,10) : '?'}，特價到期：${cached.sale_price_expires_at ? new Date(cached.sale_price_expires_at).toISOString().slice(0,10) : '?'}）`);
     return {
       originalPrice: cached.original_price,
       salePrice:     cached.sale_price,
@@ -76,7 +76,7 @@ async function ensurePchomePrice(setNumber, dryRun) {
       };
     }
     logger.debug(`[Cache] ${setNumber} 特價快取過期，重抓特價（原價沿用快取）`);
-    const result = await getPchomePrice(setNumber);
+    const result = await getPchomePrice(setNumber, pchomeId);
     if (!dryRun) {
       await db.updateSalePriceCache(setNumber, result.salePrice || null);
     }
@@ -89,7 +89,7 @@ async function ensurePchomePrice(setNumber, dryRun) {
 
   // ── 情況 3：原價也過期（或首次查詢）→ 全部重抓 ──────────────────────────
   logger.debug(`[Cache] ${setNumber} 快取全部過期，重抓全部`);
-  const result = await getPchomePrice(setNumber);
+  const result = await getPchomePrice(setNumber, pchomeId);
 
   let originalPrice = result.originalPrice || null;
   let priceSource   = 'pchome';
@@ -170,8 +170,9 @@ async function runScan({ dryRun = false } = {}) {
   const pchomePrices = {};
   const manualEolSet = new Set(watchlistItems.filter(w => w.is_eol).map(w => w.set_number));
 
-  for (const sn of setNumbers) {
-    const p = await ensurePchomePrice(sn, dryRun);
+  for (const w of watchlistItems) {
+    const sn = w.set_number;
+    const p = await ensurePchomePrice(sn, dryRun, w.pchome_id || null);
     // 手動絕版標註（watchlist.is_eol）→ 強制走絕版邏輯（閾值放寬）
     if (manualEolSet.has(sn)) p.isEol = true;
     pchomePrices[sn] = p;
