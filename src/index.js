@@ -345,7 +345,16 @@ async function runScan({ dryRun = false } = {}) {
 
   if (alerts.length === 0) {
     logger.info('目前無符合閾值的優惠。');
-    if (!dryRun) await notify.sendDailySummary(setNumbers.length, 0);
+    // 「無優惠摘要」一天只發一次（避免每 4 小時掃描各發一則洗頻）
+    if (!dryRun) {
+      const SUMMARY_KEY = '__daily_summary__';
+      if (await db.wasAlertSentRecently(SUMMARY_KEY, 'S', 23)) {
+        logger.info('[通知] 今日已發過無優惠摘要，跳過');
+      } else {
+        await notify.sendDailySummary(setNumbers.length, 0);
+        await db.saveAlertSent(SUMMARY_KEY, 'S', 0, 0);
+      }
+    }
   } else {
     for (const { item, analysis } of alerts) {
       printAlert(item, analysis);
