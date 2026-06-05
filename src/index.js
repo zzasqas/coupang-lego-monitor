@@ -24,9 +24,12 @@ const { getSetPrice: getBrickEconomyPrice } = require('./crawler/brickeconomy');
 const { runScan: runBiggoScan }   = require('./crawler/biggo');
 const { analyze, formatDiscount } = require('./analyzer/discount');
 const notify  = require('./notify/index');
-const { sendWeeklyReport }        = require('./reporter/weekly');
+// 日報由 bot/index.js 直接呼叫 sendDailyReport，此處不再 import
 
 const settings        = require('../config/settings.json');
+
+// 有 DATABASE_URL → 用 PostgreSQL（Railway）；沒有 → 用 watchlist.json + 不寫 DB（本機模式）
+const USE_DB = !!process.env.DATABASE_URL;
 
 const OFFSET_PCHOME  = settings.thresholds.pchome_sale_offset ?? 0.01;   // +0.1折
 
@@ -45,6 +48,28 @@ const OFFSET_PCHOME  = settings.thresholds.pchome_sale_offset ?? 0.01;   // +0.1
  *  3. 原價過期（含全新品項）→ 全部重抓，兩個 TTL 一起更新
  */
 async function ensurePchomePrice(setNumber, dryRun, pchomeId) {
+  // ── 本機模式（無 DB）：每次直接爬，無快取 ─────────────────────────────────
+  if (!USE_DB) {
+    const result = await getPchomePrice(setNumber, pchomeId);
+    let originalPrice = result.originalPrice || null;
+    let priceSource   = 'pchome';
+    if (!result.found) {
+      logger.info(`[BrickEconomy] ${setNumber} PCHome 找不到，查 BrickEconomy...`);
+      const beResult = await getBrickEconomyPrice(setNumber);
+      if (beResult.found && beResult.retailPriceTWD) {
+        originalPrice = beResult.retailPriceTWD;
+        priceSource   = 'brickeconomy';
+        logger.info(`[BrickEconomy] ${setNumber} 採用 NT$${originalPrice}（USD $${beResult.retailPriceUSD} × 33）`);
+      }
+    }
+    return {
+      originalPrice,
+      salePrice:  result.salePrice || null,
+      isEol:      !result.found,
+      priceSource,
+    };
+  }
+
   const cached = await db.getPchomePrice(setNumber);
   const now    = new Date();
 
@@ -157,13 +182,29 @@ function printAlert(item, analysis) {
 async function runScan({ dryRun = false } = {}) {
   logger.info('====== 樂高價格監控開始 ======');
   logger.info(`Log 路徑：${logger.logFile}`);
-  logger.info(`模式：${dryRun ? 'DRY RUN（不寫 DB / 不通知）' : '正常執行'}`);
+  logger.info(`模式：${dryRun ? 'DRY RUN（不寫 DB / 不通知）' : '正常執行'}　DB：${USE_DB ? 'PostgreSQL' : '本機（watchlist.json）'}`);
 
-  await db.initDb();
+  if (USE_DB) await db.initDb();
 
-  // Watchlist 來源改為 DB（預設只取未停用品項）
-  const watchlistItems = await db.getWatchlist();
-  const setNumbers     = watchlistItems.map(w => w.set_number);
+  // Watchlist 來源：有 DB 用 DB；否則讀 watchlist.json
+  let watchlistItems;
+  if (USE_DB) {
+    watchlistItems = await db.getWatchlist();
+  } else {
+    const jsonData = require('../config/watchlist.json');
+    watchlistItems = (jsonData.watchlist || [])
+      .filter(w => !w.disabled)
+      .map(w => ({
+        set_number:   String(w.set_number),
+        note:         w.note         || '',
+        is_eol:       !!w.is_eol,
+        target_price: w.target_price || null,
+        pchome_id:    w.pchome_id   || null,
+        disabled:     false,
+      }));
+    logger.info(`[Watchlist] 從 watchlist.json 讀取 ${watchlistItems.length} 個品項`);
+  }
+  const setNumbers = watchlistItems.map(w => w.set_number);
 
   // ── Step 1: PCHome 定價 & 特價 ─────────────────────────────────────────────
   logger.info(`\n[Step 1] 取得 ${setNumbers.length} 個品項的 PCHome 定價（原價快取 40-50天 / 特價快取 2-3天）...`);
@@ -280,7 +321,7 @@ async function runScan({ dryRun = false } = {}) {
       `${analysis.discountStr} | ${analysis.shouldAlert ? '⚠️  警報' : '正常'}`
     );
 
-    if (!dryRun) {
+    if (!dryRun && USE_DB) {
       await db.upsertProduct(sn, coupangItem.name, w.note || '');
       await db.savePrice({
         setNumber:     sn,
@@ -303,7 +344,7 @@ async function runScan({ dryRun = false } = {}) {
           isEol:          pInfo.isEol,
           coupangUrl:     coupangItem.coupangUrl,
           source:         'coupang',
-          stats:          await db.getPriceStats(sn),
+          stats:          USE_DB ? await db.getPriceStats(sn) : {},
         },
         analysis,
       });
@@ -348,38 +389,44 @@ async function runScan({ dryRun = false } = {}) {
 
   if (alerts.length === 0) {
     logger.info('目前無符合閾值的優惠。');
-    // 「無優惠摘要」一天只發一次（避免每 4 小時掃描各發一則洗頻）
     if (!dryRun) {
-      const SUMMARY_KEY = '__daily_summary__';
-      if (await db.wasAlertSentRecently(SUMMARY_KEY, 'S', 23)) {
-        logger.info('[通知] 今日已發過無優惠摘要，跳過');
+      if (USE_DB) {
+        // 有 DB：「無優惠摘要」一天只發一次（避免多次掃描洗頻）
+        const SUMMARY_KEY = '__daily_summary__';
+        if (await db.wasAlertSentRecently(SUMMARY_KEY, 'S', 23)) {
+          logger.info('[通知] 今日已發過無優惠摘要，跳過');
+        } else {
+          await notify.sendDailySummary(setNumbers.length, 0);
+          await db.saveAlertSent(SUMMARY_KEY, 'S', 0, 0);
+        }
       } else {
+        // 本機模式：每次都發摘要
         await notify.sendDailySummary(setNumbers.length, 0);
-        await db.saveAlertSent(SUMMARY_KEY, 'S', 0, 0);
       }
     }
   } else {
     for (const { item, analysis } of alerts) {
       printAlert(item, analysis);
       if (!dryRun) {
-        const alertKey = item.setNumber || item.name;
-        if (!(await db.wasAlertSentRecently(alertKey, analysis.alertType))) {
-          await notify.sendAlert(item, analysis);
-          await db.saveAlertSent(alertKey, analysis.alertType, item.coupangPrice, analysis.discountPct);
+        if (USE_DB) {
+          // 有 DB：24 小時內已通知過就跳過
+          const alertKey = item.setNumber || item.name;
+          if (!(await db.wasAlertSentRecently(alertKey, analysis.alertType))) {
+            await notify.sendAlert(item, analysis);
+            await db.saveAlertSent(alertKey, analysis.alertType, item.coupangPrice, analysis.discountPct);
+          } else {
+            logger.info(`  [通知] ${item.setNumber} 24小時內已通知過，跳過`);
+          }
         } else {
-          logger.info(`  [通知] ${item.setNumber} 24小時內已通知過，跳過`);
+          // 本機模式：無去重，直接發（一天只跑兩次，不需要去重）
+          await notify.sendAlert(item, analysis);
         }
       }
     }
     if (!dryRun) logger.info('');
   }
 
-  // ── Step 6: 每週報告（週二發送）────────────────────────────────────────────
-  const isWeeklyReportDay = new Date().getDay() === (settings.weekly_report?.day_of_week ?? 2);
-  if (isWeeklyReportDay && !dryRun) {
-    logger.info('\n[Step 6] 今天是週報日，產生並發送週報...');
-    await sendWeeklyReport(watchlistItems, pchomePrices, scanResult.watchlist, db);
-  }
+  // Step 6 已移除：日報改由 bot/index.js 每天中午 12:00 獨立觸發（sendDailyReport）
 
   logger.info('====== 執行完畢 ======\n');
   return {
