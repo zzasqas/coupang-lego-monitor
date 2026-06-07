@@ -62,21 +62,33 @@ async function getPchomePrice(setNumber, pchomeId) {
       return { found: false, reason: 'no_results' };
     }
 
-    // 找第一個 Name 包含組號的商品
-    const match = prods.find((p) => (p.Name || '').includes(setNumber));
+    // 比對優先順序：
+    // 1. Name 含組號（最精準）
+    // 2. 第一筆含 "LEGO" 且 Name 含 "樂高" 或 "LEGO" 的商品（組號未出現在名稱時的備援）
+    const sn = String(setNumber);
+    let match = prods.find((p) => (p.Name || '').includes(sn));
+    if (!match) {
+      match = prods.find((p) => {
+        const name = (p.Name || '').toUpperCase();
+        return name.includes('LEGO') || name.includes('樂高');
+      });
+    }
 
     if (!match) {
-      logger.info(`[PCHome] ${setNumber} → 共 ${prods.length} 筆，無符合組號 → 視為絕版`);
+      logger.info(`[PCHome] ${setNumber} → 共 ${prods.length} 筆，無符合商品 → 視為絕版`);
       return { found: false, reason: 'no_match', totalProds: prods.length };
     }
 
+    if (!match.Price) {
+      logger.info(`[PCHome] ${setNumber} → 商品無售價資料 → 視為絕版`);
+      return { found: false, reason: 'no_price' };
+    }
+
     // OriginPrice = 劃線原價（LEGO MSRP）；Price = 現售價
-    const originalPrice = match.OriginPrice && match.OriginPrice > match.Price
-      ? match.OriginPrice
-      : match.Price || null;
-    const salePrice = match.OriginPrice && match.OriginPrice > match.Price
-      ? match.Price || null
-      : null;
+    // 若 OriginPrice 不存在或與 Price 相同 → 沒有在打折，以 Price 為定價
+    const hasDiscount = match.OriginPrice && match.OriginPrice > match.Price;
+    const originalPrice = hasDiscount ? match.OriginPrice : match.Price;
+    const salePrice     = hasDiscount ? match.Price : null;
 
     logger.info(
       `[PCHome] ${setNumber} → 定價 NT$${originalPrice}` +

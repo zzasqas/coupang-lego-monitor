@@ -1,8 +1,9 @@
-name: LEGO Weekend Monitor
+name: LEGO Daily Monitor
 
 on:
   schedule:
-    - cron: '10 2 * * 0,6'
+    - cron: '0 0 * * *'    # 台灣時間 08:00（本機 10:10 前）
+    - cron: '0 13 * * *'   # 台灣時間 21:00（本機 16:50 後）
   workflow_dispatch:
 
 jobs:
