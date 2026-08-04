@@ -45,6 +45,16 @@ function fetchSearchJson(setNumber) {
 }
 
 /**
+ * 從搜尋結果挑出「名稱含組號」的商品；找不到回 null（不做任何模糊備援）。
+ * 用數字邊界比對，避免 21348 誤命中 213480 之類的子字串。
+ * @returns {object|null}
+ */
+function matchProduct(prods, setNumber) {
+  const re = new RegExp(`(^|\\D)${String(setNumber)}(\\D|$)`);
+  return prods.find((p) => re.test(p.Name || '')) || null;
+}
+
+/**
  * 查詢 PCHome 的定價與現售價
  *
  * @param {string} setNumber   LEGO 組號，e.g. "76452"
@@ -62,20 +72,13 @@ async function getPchomePrice(setNumber, pchomeId) {
       return { found: false, reason: 'no_results' };
     }
 
-    // 比對優先順序：
-    // 1. Name 含組號（最精準）
-    // 2. 第一筆含 "LEGO" 且 Name 含 "樂高" 或 "LEGO" 的商品（組號未出現在名稱時的備援）
-    const sn = String(setNumber);
-    let match = prods.find((p) => (p.Name || '').includes(sn));
-    if (!match) {
-      match = prods.find((p) => {
-        const name = (p.Name || '').toUpperCase();
-        return name.includes('LEGO') || name.includes('樂高');
-      });
-    }
+    // 只認「名稱含組號」的商品。PChome 搜尋沒上架的組號時，會回一堆不相干的熱門
+    // LEGO（瑪利歐、花束…），若退而抓「第一個 LEGO 商品」會張冠李戴、報出假特價，
+    // 故不做 fallback：找不到組號就當絕版（不報 PChome 特價，改走 BrickEconomy/舊價）。
+    const match = matchProduct(prods, setNumber);
 
     if (!match) {
-      logger.info(`[PCHome] ${setNumber} → 共 ${prods.length} 筆，無符合商品 → 視為絕版`);
+      logger.info(`[PCHome] ${setNumber} → 共 ${prods.length} 筆，無一筆含組號 → 視為絕版`);
       return { found: false, reason: 'no_match', totalProds: prods.length };
     }
 
@@ -108,10 +111,27 @@ async function getPchomePrice(setNumber, pchomeId) {
   }
 }
 
-module.exports = { getPchomePrice };
+module.exports = { getPchomePrice, matchProduct };
 
 // 直接執行測試
 if (require.main === module) {
+  // node pchome.js selftest → 純比對自檢（不連網）
+  if (process.argv.includes('selftest')) {
+    const assert = require('assert');
+    // 21348 未上架：PChome 回一堆不相干熱門 LEGO → 必須配不到（不可亂抓）
+    assert.strictEqual(matchProduct([
+      { Name: 'LEGO 樂高 超級瑪利歐系列 72046 Game Boy', Price: 1407, OriginPrice: 2199 },
+      { Name: 'LEGO 樂高 Ideas 21358 人偶扭蛋機', Price: 4022 },
+    ], '21348'), null, '21348 不該配到任何商品');
+    // 有組號 → 命中該筆
+    assert.strictEqual(matchProduct([
+      { Name: 'LEGO 樂高 旋風忍者系列 71856 阿光的變形汽車', Price: 1169 },
+    ], '71856').Price, 1169, '71856 應命中');
+    // 子字串不可誤命中
+    assert.strictEqual(matchProduct([{ Name: 'LEGO 213480 假貨' }], '21348'), null, '21348 不該配到 213480');
+    console.log('✅ pchome matchProduct selftest 全過');
+    process.exit(0);
+  }
   const setNum = process.argv.find((a) => /^\d{4,6}$/.test(a)) || '76452';
   getPchomePrice(setNum).then((r) => {
     console.log('\n結果：', JSON.stringify(r, null, 2));
