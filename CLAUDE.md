@@ -1,8 +1,8 @@
 # Coupang LEGO 監控系統 — 專案記憶
 
 ## 現在怎麼跑
-- 本機和 GitHub Actions 都**沒有 `DATABASE_URL`** → watchlist 讀 `config/watchlist.json`，不寫價格歷史、不去重、不發週報
-- 進入點：`node src/index.js`（`npm run scan:once`；`npm run scan:dry` 不通知）
+- 沒有資料庫：watchlist 讀 `config/watchlist.json`，不存價格歷史、警報不去重、沒有週報
+- 進入點：`node src/index.js`（`npm start`；`npm run scan:dry` 不通知）
 - 通知：Discord Webhook（`.env` 的 `NOTIFY_CHANNEL` / `DISCORD_WEBHOOK_URL`；GitHub 用 repo secret）
 
 ## 更新 Watchlist
@@ -16,8 +16,7 @@
 ## 排程
 - GitHub: https://github.com/zzasqas/coupang-lego-monitor（只有 `main` 分支；schedule 只跑 main）
 - GitHub Actions 每天 08:00、21:00（台灣時間），`.github/workflows/weekend-monitor.yml`，runner 固定 `ubuntu-24.04`
-- 本機工作排程器 `LegoMonitor-Morning` 每天 11:35 → `scripts/run.bat`（寫 `logs/run.log`）
-- `LEGO Price Monitor 1010` / `1650`、`LegoMonitor-Afternoon` 已停用
+- 本機工作排程器 `LegoMonitor-Morning` 每天 11:35 → `scripts/run.bat`（寫 `logs/run.log`）；重建用 `scripts/setup-scheduler.bat`（系統管理員）
 
 ## 架構快覽
 
@@ -31,10 +30,7 @@
 | `src/crawler/brickeconomy.js` | 絕版品 MSRP 備援（Playwright） |
 | `src/notify/discord.js` | Discord Webhook 通知（預設）；`telegram.js` 備用 |
 
-### 閒置中（Railway / PostgreSQL 版，目前沒在用）
-`src/bot/`（Discord Bot 指令 + node-cron）、`src/data/db.js`、`src/reporter/weekly.js`、
-`scripts/migrate.js` / `seed-watchlist.js`、`Dockerfile`、`railway.json`、
-[docs/RAILWAY_MIGRATION_PLAN.md](docs/RAILWAY_MIGRATION_PLAN.md)。設了 `DATABASE_URL` 才會啟用。
+Railway / PostgreSQL / Discord Bot 版已於 2026-11-17 移除，要找回看 commit `39b57e2` 之前的歷史。
 
 ## 折扣門檻
 - 一般品：6.4折（0.64）

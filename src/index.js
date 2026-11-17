@@ -3,9 +3,9 @@
  *
  * 執行流程：
  * 1. 讀取 watchlist
- * 2. 對每個品項取得 PCHome 定價與特價（快取 40-50 天）
+ * 2. 對每個品項取得 PCHome 定價與特價（找不到 → BrickEconomy）
  * 3. 用 BigGo 搜尋各品項的 Coupang 現售價
- * 4. 分析折扣 → 發 Telegram 通知
+ * 4. 分析折扣 → 發 Discord 通知
  *    - Coupang 警報：非絕版 6.4折 / 絕版 6.9折
  *    - PCHome 特價：門檻各寬鬆 0.1折（6.5折 / 7.0折）
  * 5. 廣域搜尋前30筆樂高商品並同步分析
@@ -13,140 +13,36 @@
  * 用法：
  *   node src/index.js              → 正常執行
  *   node src/index.js --debug      → 開啟截圖 + 詳細 log
- *   node src/index.js --dry-run    → 不寫 DB / 不發通知，只印結果
+ *   node src/index.js --dry-run    → 不發通知，只印結果
  */
 
 require('dotenv').config();
 const logger  = require('./utils/logger');
-const db      = require('./data/db');
 const { getPchomePrice }          = require('./crawler/pchome');
 const { getSetPrice: getBrickEconomyPrice } = require('./crawler/brickeconomy');
 const { runScan: runBiggoScan }   = require('./crawler/biggo');
 const { analyze, formatDiscount } = require('./analyzer/discount');
 const notify  = require('./notify/index');
-// 日報由 bot/index.js 直接呼叫 sendDailyReport，此處不再 import
 
 const settings        = require('../config/settings.json');
-
-// 有 DATABASE_URL → 用 PostgreSQL（Railway）；沒有 → 用 watchlist.json + 不寫 DB（本機模式）
-const USE_DB = !!process.env.DATABASE_URL;
 
 const OFFSET_PCHOME  = settings.thresholds.pchome_sale_offset ?? 0.01;   // +0.1折
 
 // ── 輔助 ──────────────────────────────────────────────────────────────────────
 
-/**
- * 取 PCHome 定價 & 特價（雙快取策略）
- *
- * 快取分開計時：
- *  - 原價 / 絕版判斷：40-50 天（expires_at）；BrickEconomy 來源永不過期（2099年）
- *  - 特價：          2-3  天（sale_price_expires_at）
- *
- * 四種情況：
- *  1. 兩者都有效 → 直接回傳快取，不爬網頁
- *  2. 原價有效、特價過期 → 只重抓特價（BrickEconomy 來源跳過，沒有特價）
- *  3. 原價過期（含全新品項）→ 全部重抓，兩個 TTL 一起更新
- */
-async function ensurePchomePrice(setNumber, dryRun, pchomeId) {
-  // ── 本機模式（無 DB）：每次直接爬，無快取 ─────────────────────────────────
-  if (!USE_DB) {
-    const result = await getPchomePrice(setNumber, pchomeId);
-    let originalPrice = result.originalPrice || null;
-    let priceSource   = 'pchome';
-    if (!result.found) {
-      logger.info(`[BrickEconomy] ${setNumber} PCHome 找不到，查 BrickEconomy...`);
-      const beResult = await getBrickEconomyPrice(setNumber);
-      if (beResult.found && beResult.retailPriceTWD) {
-        originalPrice = beResult.retailPriceTWD;
-        priceSource   = 'brickeconomy';
-        logger.info(`[BrickEconomy] ${setNumber} 採用 NT$${originalPrice}（USD $${beResult.retailPriceUSD} × 33）`);
-      }
-    }
-    return {
-      originalPrice,
-      salePrice:  result.salePrice || null,
-      isEol:      !result.found,
-      priceSource,
-    };
-  }
-
-  const cached = await db.getPchomePrice(setNumber);
-  const now    = new Date();
-
-  const originalExpired = !cached || now > new Date(cached.expires_at);
-  const saleExpired     = !cached
-    || !cached.sale_price_expires_at
-    || now > new Date(cached.sale_price_expires_at);
-
-  // ── 情況 1：全部快取有效 ──────────────────────────────────────────────────
-  if (!originalExpired && !saleExpired) {
-    logger.debug(`[Cache] ${setNumber} 快取全部有效（原價到期：${cached.expires_at ? new Date(cached.expires_at).toISOString().slice(0,10) : '?'}，特價到期：${cached.sale_price_expires_at ? new Date(cached.sale_price_expires_at).toISOString().slice(0,10) : '?'}）`);
-    return {
-      originalPrice: cached.original_price,
-      salePrice:     cached.sale_price,
-      isEol:         !!cached.is_eol,
-    };
-  }
-
-  // ── 情況 2：原價有效、只有特價過期 ──────────────────────────────────────
-  if (!originalExpired && saleExpired) {
-    // BrickEconomy 來源 = 絕版品，PCHome 本來就找不到，不需要重抓特價
-    if (cached.price_source === 'brickeconomy') {
-      logger.debug(`[Cache] ${setNumber} BrickEconomy 定價永久有效，跳過特價重抓`);
-      return {
-        originalPrice: cached.original_price,
-        salePrice:     null,
-        isEol:         true,
-        priceSource:   'brickeconomy',
-      };
-    }
-    logger.debug(`[Cache] ${setNumber} 特價快取過期，重抓特價（原價沿用快取）`);
-    const result = await getPchomePrice(setNumber, pchomeId);
-    if (!dryRun) {
-      await db.updateSalePriceCache(setNumber, result.salePrice || null);
-    }
-    return {
-      originalPrice: cached.original_price,
-      salePrice:     result.salePrice || null,
-      isEol:         !!cached.is_eol,
-    };
-  }
-
-  // ── 情況 3：原價也過期（或首次查詢）→ 全部重抓 ──────────────────────────
-  logger.debug(`[Cache] ${setNumber} 快取全部過期，重抓全部`);
+/** 取 PCHome 定價 & 特價；PCHome 找不到（多半是絕版）→ BrickEconomy 定價 */
+async function ensurePchomePrice(setNumber, pchomeId) {
   const result = await getPchomePrice(setNumber, pchomeId);
-
   let originalPrice = result.originalPrice || null;
   let priceSource   = 'pchome';
-
-  // PCHome 這次找不到（絕版或下架）
   if (!result.found) {
-    // 優先：DB 裡有沒有上次查到的舊定價（最準確）
-    const lastRecord = await db.getLastPchomeRecord(setNumber);
-    if (lastRecord?.original_price) {
-      originalPrice = lastRecord.original_price;
-      priceSource   = 'pchome_last';   // 標記為「PCHome 最後已知定價」
-      logger.info(`[Cache] ${setNumber} PCHome 找不到，沿用上次定價 NT$${originalPrice}`);
-    } else {
-      // 完全沒有舊記錄 → 查 BrickEconomy
-      logger.info(`[BrickEconomy] ${setNumber} 無歷史定價，查 BrickEconomy...`);
-      const beResult = await getBrickEconomyPrice(setNumber);
-      if (beResult.found && beResult.retailPriceTWD) {
-        originalPrice = beResult.retailPriceTWD;
-        priceSource   = 'brickeconomy';
-        logger.info(`[BrickEconomy] ${setNumber} 採用 NT$${originalPrice}（USD $${beResult.retailPriceUSD} × 33）`);
-      }
+    logger.info(`[BrickEconomy] ${setNumber} PCHome 找不到，查 BrickEconomy...`);
+    const beResult = await getBrickEconomyPrice(setNumber);
+    if (beResult.found && beResult.retailPriceTWD) {
+      originalPrice = beResult.retailPriceTWD;
+      priceSource   = 'brickeconomy';
+      logger.info(`[BrickEconomy] ${setNumber} 採用 NT$${originalPrice}（USD $${beResult.retailPriceUSD} × 33）`);
     }
-  }
-
-  if (!dryRun) {
-    await db.savePchomePrice(
-      setNumber,
-      originalPrice,
-      !result.found,
-      result.salePrice || null,
-      priceSource,
-    );
   }
   return {
     originalPrice,
@@ -182,46 +78,34 @@ function printAlert(item, analysis) {
 async function runScan({ dryRun = false } = {}) {
   logger.info('====== 樂高價格監控開始 ======');
   logger.info(`Log 路徑：${logger.logFile}`);
-  logger.info(`模式：${dryRun ? 'DRY RUN（不寫 DB / 不通知）' : '正常執行'}　DB：${USE_DB ? 'PostgreSQL' : '本機（watchlist.json）'}`);
+  logger.info(`模式：${dryRun ? 'DRY RUN（不通知）' : '正常執行'}`);
 
-  if (USE_DB) await db.initDb();
-
-  // Watchlist 來源：有 DB 用 DB；否則讀 watchlist.json
-  let watchlistItems;
-  if (USE_DB) {
-    watchlistItems = await db.getWatchlist();
-  } else {
-    const jsonData = require('../config/watchlist.json');
-    watchlistItems = (jsonData.watchlist || [])
-      .filter(w => !w.disabled)
-      .map(w => ({
-        set_number:   String(w.set_number),
-        note:         w.note         || '',
-        is_eol:       !!w.is_eol,
-        target_price: w.target_price || null,
-        pchome_id:    w.pchome_id   || null,
-        disabled:     false,
-      }));
-    logger.info(`[Watchlist] 從 watchlist.json 讀取 ${watchlistItems.length} 個品項`);
-  }
+  const watchlistItems = (require('../config/watchlist.json').watchlist || [])
+    .filter(w => !w.disabled)
+    .map(w => ({
+      set_number:   String(w.set_number),
+      note:         w.note         || '',
+      is_eol:       !!w.is_eol,
+      target_price: w.target_price || null,
+      pchome_id:    w.pchome_id   || null,
+    }));
+  logger.info(`[Watchlist] 從 watchlist.json 讀取 ${watchlistItems.length} 個品項`);
   const setNumbers = watchlistItems.map(w => w.set_number);
 
   // ── Step 1: PCHome 定價 & 特價 ─────────────────────────────────────────────
-  logger.info(`\n[Step 1] 取得 ${setNumbers.length} 個品項的 PCHome 定價（原價快取 40-50天 / 特價快取 2-3天）...`);
+  logger.info(`\n[Step 1] 取得 ${setNumbers.length} 個品項的 PCHome 定價...`);
   const pchomePrices = {};
   const manualEolSet = new Set(watchlistItems.filter(w => w.is_eol).map(w => w.set_number));
 
   for (const w of watchlistItems) {
     const sn = w.set_number;
-    const p = await ensurePchomePrice(sn, dryRun, w.pchome_id || null);
+    const p = await ensurePchomePrice(sn, w.pchome_id || null);
     // 手動絕版標註（watchlist.is_eol）→ 強制走絕版邏輯（閾值放寬）
     if (manualEolSet.has(sn)) p.isEol = true;
     pchomePrices[sn] = p;
 
     if (p.isEol) {
-      const srcTag = p.priceSource === 'brickeconomy' ? '（BrickEconomy）'
-                   : p.priceSource === 'pchome_last'  ? '（PCHome 最後紀錄）'
-                   : '';
+      const srcTag = p.priceSource === 'brickeconomy' ? '（BrickEconomy）' : '';
       const priceTag = p.originalPrice ? `，參考定價 NT$${p.originalPrice}${srcTag}` : '，無參考定價';
       logger.info(`  ${sn} → ⚠️  絕版${priceTag}，Coupang 閾值 ${(settings.thresholds.eol_item * 10).toFixed(1)}折`);
     } else {
@@ -321,18 +205,6 @@ async function runScan({ dryRun = false } = {}) {
       `${analysis.discountStr} | ${analysis.shouldAlert ? '⚠️  警報' : '正常'}`
     );
 
-    if (!dryRun && USE_DB) {
-      await db.upsertProduct(sn, coupangItem.name, w.note || '');
-      await db.savePrice({
-        setNumber:     sn,
-        productName:   coupangItem.name,
-        coupangUrl:    coupangItem.coupangUrl    || null,
-        price:         coupangItem.price,
-        originalPrice: coupangItem.originalPrice ?? null,
-        discountPct:   analysis.discountPct,
-      });
-    }
-
     if (analysis.shouldAlert) {
       alerts.push({
         item: {
@@ -344,7 +216,6 @@ async function runScan({ dryRun = false } = {}) {
           isEol:          pInfo.isEol,
           coupangUrl:     coupangItem.coupangUrl,
           source:         'coupang',
-          stats:          USE_DB ? await db.getPriceStats(sn) : {},
         },
         analysis,
       });
@@ -389,67 +260,23 @@ async function runScan({ dryRun = false } = {}) {
 
   if (alerts.length === 0) {
     logger.info('目前無符合閾值的優惠。');
-    if (!dryRun) {
-      if (USE_DB) {
-        // 有 DB：「無優惠摘要」一天只發一次（避免多次掃描洗頻）
-        const SUMMARY_KEY = '__daily_summary__';
-        if (await db.wasAlertSentRecently(SUMMARY_KEY, 'S', 23)) {
-          logger.info('[通知] 今日已發過無優惠摘要，跳過');
-        } else {
-          await notify.sendDailySummary(setNumbers.length, 0);
-          await db.saveAlertSent(SUMMARY_KEY, 'S', 0, 0);
-        }
-      } else {
-        // 本機模式：每次都發摘要
-        await notify.sendDailySummary(setNumbers.length, 0);
-      }
-    }
+    if (!dryRun) await notify.sendDailySummary(setNumbers.length, 0);
   } else {
     for (const { item, analysis } of alerts) {
       printAlert(item, analysis);
-      if (!dryRun) {
-        if (USE_DB) {
-          // 有 DB：24 小時內已通知過就跳過
-          const alertKey = item.setNumber || item.name;
-          if (!(await db.wasAlertSentRecently(alertKey, analysis.alertType))) {
-            await notify.sendAlert(item, analysis);
-            await db.saveAlertSent(alertKey, analysis.alertType, item.coupangPrice, analysis.discountPct);
-          } else {
-            logger.info(`  [通知] ${item.setNumber} 24小時內已通知過，跳過`);
-          }
-        } else {
-          // 本機模式：無去重，直接發（一天只跑兩次，不需要去重）
-          await notify.sendAlert(item, analysis);
-        }
-      }
+      // ponytail: 無去重，同一警報每次掃描都會發；要去重得存「上次通知」狀態
+      if (!dryRun) await notify.sendAlert(item, analysis);
     }
     if (!dryRun) logger.info('');
   }
 
-  // Step 6 已移除：日報改由 bot/index.js 每天中午 12:00 獨立觸發（sendDailyReport）
-
   logger.info('====== 執行完畢 ======\n');
-  return {
-    alertCount: alerts.length,
-    scanned:    setNumbers.length,
-    // 供 Discord /lego scan 回覆顯示（不含發到 webhook 的完整內容）
-    alerts: alerts.map(({ item, analysis }) => ({
-      setNumber:   item.setNumber || null,
-      name:        item.name || item.setNumber || '?',
-      price:       item.coupangPrice ?? null,
-      ref:         item.pchomeOriginal ?? null,
-      discountStr: analysis.discountStr || null,
-      source:      item.source,            // 'pchome' | 'coupang'
-      alertType:   analysis.alertType,     // 'A' 清單Coupang / 'P' PCHome特價 / 'B' 廣域
-      isEol:       !!item.isEol,
-      url:         item.coupangUrl || null,
-    })),
-  };
+  return { alertCount: alerts.length, scanned: setNumbers.length };
 }
 
 module.exports = { runScan };
 
-// 直接執行時：跑一次掃描（給 cron / 手動 debug 用）
+// 直接執行時：跑一次掃描（工作排程器 / GitHub Actions / 手動）
 if (require.main === module) {
   runScan({ dryRun: process.argv.includes('--dry-run') })
     .then(() => process.exit(0))
