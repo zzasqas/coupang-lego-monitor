@@ -45,9 +45,10 @@
 - 絕版品：6.9折（0.69）
 - PCHome 特價門檻各寬鬆 0.1折
 
-## 雲端排程（週末用）
+## 排程
 - GitHub: https://github.com/zzasqas/coupang-lego-monitor
-- 週六、週日各跑一次（台灣時間 09:00）
+- GitHub Actions 每天 08:00、21:00（台灣時間）；本機工作排程器 `LegoMonitor-Morning` 每天 11:35（寫 logs/run.log）
+- 本機與雲端都無 DB，同一警報不去重
 - 雲端無 DB 歷史，只發即時警報，不發週報
 
 ## 待辦（未來）
